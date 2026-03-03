@@ -5,7 +5,35 @@ import { deriveNuId } from '../utils/nuId'
 import { StaffRole, UserType } from '@prisma/client'
 import { ROLE_DEFAULT_ACTIONS, actionsToKebab } from '../utils/actions'
 
-//for logout
+export async function refreshToken(req: Request, res: Response): Promise<void> {
+    const { refreshToken: token } = req.body as { refreshToken?: string }
+
+    if (!token) {
+        res.status(400).json({ success: false, message: 'Refresh token is required.' })
+        return
+    }
+
+    // supabasePublic.auth.setSession exchanges the refresh token for a new session
+    const { data, error } = await supabasePublic.auth.setSession({
+        access_token:  '',   // Supabase ignores this when refresh_token is valid
+        refresh_token: token,
+    })
+
+    if (error || !data.session) {
+        res.status(401).json({ success: false, message: 'Refresh token is invalid or expired. Please log in again.' })
+        return
+    }
+
+    res.status(200).json({
+        success:      true,
+        message:      'Token refreshed.',
+        accessToken:  data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        expiresIn:    data.session.expires_in,
+    })
+}
+
+// for logout
 export async function logoutUser(req: Request, res: Response): Promise<void> {
     const authHeader = req.headers.authorization ?? ''
     const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { validate } from '../middleware/validate'
-import { registerStaff, loginUser, logoutUser } from '../controllers/auth.controller'
+import { registerStaff, loginUser, logoutUser, refreshToken } from '../controllers/auth.controller'
 
 const router = Router()
 
@@ -43,5 +43,8 @@ router.post('/login', validate(loginSchema), loginUser)
 
 // POST /auth/logout
 router.post('/logout', logoutUser)
+
+// POST /auth/refresh
+router.post('/refresh', refreshToken)
 
 export default router
