@@ -1,7 +1,8 @@
 import { Response } from 'express'
 import { AuthRequest } from '../middleware/auth'
 import { prisma } from '../config/db'
-import { Prisma, RegistrationStatus } from '@prisma/client'
+import { Prisma, RegistrationStatus, PaymentMethod } from '@prisma/client'
+import { z } from 'zod'
 
 // GET /registrations/competitions 
 
@@ -102,6 +103,14 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
                 },
                 orderBy: { isLeader: 'desc' },
             },
+            attendance: {
+                select: {
+                    participantId: true,
+                    status:        true,
+                    method:        true,
+                    markedAt:      true,
+                },
+            },
         },
     })
 
@@ -125,14 +134,253 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
             createdAt:       team.createdAt,
             updatedAt:       team.updatedAt,
             competition:     team.competition,
-            members: team.members.map((m) => ({
-                id:          m.id,
-                isLeader:    m.isLeader,
-                cardIssued:  m.cardIssued,
-                cardIssuedAt: m.cardIssuedAt,
-                joinedAt:    m.joinedAt,
-                participant: m.participant,
-            })),
+            members: team.members.map((m) => {
+                const att = team.attendance.find((a) => a.participantId === m.participantId)
+                return {
+                    id:           m.id,
+                    isLeader:     m.isLeader,
+                    cardIssued:   m.cardIssued,
+                    cardIssuedAt: m.cardIssuedAt,
+                    joinedAt:     m.joinedAt,
+                    participant:  m.participant,
+                    attendance: att
+                        ? { status: att.status, method: att.method, markedAt: att.markedAt }
+                        : null,
+                }
+            }),
+        },
+    })
+}
+
+//  GET /registrations/competitions-form
+
+export async function listCompetitionsForForm(_req: AuthRequest, res: Response): Promise<void> {
+    const competitions = await prisma.competition.findMany({
+        select: {
+            id: true, name: true, compDay: true, fee: true,
+            minTeamSize: true, maxTeamSize: true,
+            startTime: true, endTime: true,
+        },
+        orderBy: { name: 'asc' },
+    })
+    res.json({ success: true, data: competitions })
+}
+
+// POST /registrations/check-clashes
+
+const clashSchema = z.object({
+    competitionId: z.string().min(1, 'Competition ID is required'),
+    cnics: z.array(z.string().min(1)).min(1),
+})
+
+export async function checkClashes(req: AuthRequest, res: Response): Promise<void> {
+    const parsed = clashSchema.safeParse(req.body)
+    if (!parsed.success) {
+        res.status(400).json({ success: false, errors: parsed.error.issues })
+        return
+    }
+
+    const { competitionId, cnics } = parsed.data
+
+    // Get the target competition's timing
+    const targetComp = await prisma.competition.findUnique({
+        where: { id: competitionId },
+        select: { id: true, name: true, startTime: true, endTime: true },
+    })
+
+    if (!targetComp) {
+        res.status(404).json({ success: false, message: 'Competition not found.' })
+        return
+    }
+
+    // Find participants by CNIC
+    const participants = await prisma.participant.findMany({
+        where: { cnic: { in: cnics } },
+        select: { id: true, cnic: true, fullName: true },
+    })
+
+    if (participants.length === 0) {
+        // No existing participants means no clashes possible
+        res.json({ success: true, clashes: [] })
+        return
+    }
+
+    // Find team memberships for those participants where the competition time overlaps
+    const clashes = await prisma.teamMember.findMany({
+        where: {
+            participantId: { in: participants.map((p) => p.id) },
+            team: {
+                competition: {
+                    id: { not: competitionId },
+                    startTime: { lt: targetComp.endTime },
+                    endTime:   { gt: targetComp.startTime },
+                },
+            },
+        },
+        select: {
+            participant: { select: { fullName: true, cnic: true } },
+            team: {
+                select: {
+                    name: true,
+                    competition: { select: { name: true, startTime: true, endTime: true } },
+                },
+            },
+        },
+    })
+
+    const formatted = clashes.map((c) => ({
+        participantName: c.participant.fullName,
+        participantCnic: c.participant.cnic,
+        clashTeam:       c.team.name,
+        clashCompetition: c.team.competition.name,
+        clashStart:      c.team.competition.startTime,
+        clashEnd:        c.team.competition.endTime,
+    }))
+
+    res.json({ success: true, clashes: formatted })
+}
+
+//  POST /registrations 
+
+const memberSchema = z.object({
+    fullName:    z.string().min(1, 'Full name is required'),
+    email:       z.string().email('Invalid email'),
+    cnic:        z.string().min(13, 'CNIC must be at least 13 characters'),
+    phone:       z.string().optional().default(''),
+    institution: z.string().optional().default(''),
+    isLeader:    z.boolean(),
+})
+
+const createRegistrationSchema = z.object({
+    teamName:      z.string().min(1, 'Team name is required'),
+    competitionId: z.string().min(1, 'Competition ID is required'),
+    referenceId:   z.string().min(1, 'Reference ID is required'),
+    paymentMethod: z.nativeEnum(PaymentMethod),
+    amountPaid:    z.string().min(1, 'Amount paid is required'),
+    members:       z.array(memberSchema).min(1, 'At least one member is required'),
+})
+
+export async function createRegistration(req: AuthRequest, res: Response): Promise<void> {
+    const parsed = createRegistrationSchema.safeParse(req.body)
+    if (!parsed.success) {
+        res.status(400).json({ success: false, errors: parsed.error.issues })
+        return
+    }
+
+    const { teamName, competitionId, referenceId, paymentMethod, amountPaid, members } = parsed.data
+
+    // Validate competition exists
+    const competition = await prisma.competition.findUnique({
+        where: { id: competitionId },
+        select: { id: true, minTeamSize: true, maxTeamSize: true, fee: true },
+    })
+
+    if (!competition) {
+        res.status(404).json({ success: false, message: 'Competition not found.' })
+        return
+    }
+
+    // Validate team size
+    if (members.length < competition.minTeamSize || members.length > competition.maxTeamSize) {
+        res.status(400).json({
+            success: false,
+            message: `Team must have between ${competition.minTeamSize} and ${competition.maxTeamSize} members.`,
+        })
+        return
+    }
+
+    // Validate exactly one leader
+    const leaders = members.filter((m) => m.isLeader)
+    if (leaders.length !== 1) {
+        res.status(400).json({ success: false, message: 'Exactly one member must be the leader.' })
+        return
+    }
+
+    // Check referenceId uniqueness
+    const existingRef = await prisma.team.findUnique({ where: { referenceId } })
+    if (existingRef) {
+        res.status(409).json({ success: false, message: 'Reference ID already exists.' })
+        return
+    }
+
+    // Upsert participants and build team in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+        // Upsert each participant by CNIC
+        const participantIds: { participantId: string; isLeader: boolean }[] = []
+
+        for (const m of members) {
+            // Check if a user with this email already exists
+            let user = await tx.user.findUnique({ where: { email: m.email } })
+
+            if (!user) {
+                user = await tx.user.create({
+                    data: { email: m.email, type: 'PARTICIPANT' },
+                })
+            }
+
+            // Upsert participant by cnic
+            let participant = await tx.participant.findUnique({ where: { cnic: m.cnic } })
+
+            if (!participant) {
+                participant = await tx.participant.create({
+                    data: {
+                        userId:      user.id,
+                        cnic:        m.cnic,
+                        email:       m.email,
+                        fullName:    m.fullName,
+                        phone:       m.phone || null,
+                        institution: m.institution || null,
+                    },
+                })
+            } else {
+                // Update participant details (name, phone, institution may change)
+                participant = await tx.participant.update({
+                    where: { id: participant.id },
+                    data: {
+                        fullName:    m.fullName,
+                        phone:       m.phone || null,
+                        institution: m.institution || null,
+                    },
+                })
+            }
+
+            participantIds.push({ participantId: participant.id, isLeader: m.isLeader })
+        }
+
+        // Create team
+        const team = await tx.team.create({
+            data: {
+                name:          teamName,
+                competitionId,
+                referenceId,
+                paymentStatus: 'VERIFIED',
+                paymentMethod,
+                amountPaid:    parseFloat(amountPaid),
+                paymentDate:   new Date(),
+                members: {
+                    create: participantIds.map((p) => ({
+                        participantId: p.participantId,
+                        isLeader:      p.isLeader,
+                    })),
+                },
+            },
+            include: {
+                competition: { select: { name: true } },
+                _count:      { select: { members: true } },
+            },
+        })
+
+        return team
+    })
+
+    res.status(201).json({
+        success: true,
+        data: {
+            id:          result.id,
+            name:        result.name,
+            referenceId: result.referenceId,
+            competition: result.competition.name,
+            memberCount: result._count.members,
         },
     })
 }
