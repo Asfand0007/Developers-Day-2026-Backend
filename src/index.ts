@@ -18,11 +18,13 @@ import userRoutes from './routes/user.routes'
 import registrationRoutes from './routes/registration.routes'
 import competitionRoutes from './routes/competition.routes'
 import ambassadorRoutes from './routes/ambassador.routes'
+import participantRoutes from './routes/participant.routes'
 app.use('/auth', authRoutes)
 app.use('/users', userRoutes)
 app.use('/registrations', registrationRoutes)
 app.use('/competitions', competitionRoutes)
 app.use('/ambassadors', ambassadorRoutes)
+app.use('/participants', participantRoutes)
 
 app.get("/", (_req: Request, res: Response) => {
   res.send("Express + TypeScript Server");

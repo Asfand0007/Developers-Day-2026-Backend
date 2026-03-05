@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { validate } from '../middleware/validate'
-import { registerStaff, loginUser, logoutUser, refreshToken } from '../controllers/auth.controller'
+import { requireAuth } from '../middleware/auth'
+import { registerStaff, loginUser, logoutUser, refreshToken, getMe } from '../controllers/auth.controller'
 
 const router = Router()
 
@@ -46,5 +47,8 @@ router.post('/logout', logoutUser)
 
 // POST /auth/refresh
 router.post('/refresh', refreshToken)
+
+// GET /auth/me — returns fresh profile + actions for the authenticated user
+router.get('/me', requireAuth, getMe)
 
 export default router

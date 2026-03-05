@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { AuthRequest } from '../middleware/auth'
 import { prisma } from '../config/db'
 import { supabaseAdmin, supabasePublic } from '../config/supabase'
 import { deriveNuId } from '../utils/nuId'
@@ -127,6 +128,44 @@ export async function loginUser(req: Request, res: Response): Promise<void> {
                 isApproved: prismaUser.staffProfile?.isApproved ?? null,
                 actions:    actionsToKebab(effective),
             },
+        },
+    })
+}
+
+// GET /auth/me — return the current user's profile with freshly-computed actions
+
+export async function getMe(req: AuthRequest, res: Response): Promise<void> {
+    const userId = req.userId
+    if (!userId) {
+        res.status(401).json({ success: false, message: 'Unauthorized.' })
+        return
+    }
+
+    const prismaUser = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { staffProfile: true, grantedActions: true },
+    })
+
+    if (!prismaUser || !prismaUser.isActive) {
+        res.status(404).json({ success: false, message: 'User not found.' })
+        return
+    }
+
+    const roleDefaults = ROLE_DEFAULT_ACTIONS[prismaUser.staffProfile?.staffRole ?? ''] ?? []
+    const extraEnums   = prismaUser.grantedActions.map((a) => a.action)
+    const effective    = [...new Set([...roleDefaults, ...extraEnums])]
+
+    res.json({
+        success: true,
+        data: {
+            id:         prismaUser.id,
+            email:      prismaUser.email,
+            type:       prismaUser.type,
+            nuId:       prismaUser.staffProfile?.nuId       ?? null,
+            fullName:   prismaUser.staffProfile?.fullName   ?? null,
+            staffRole:  prismaUser.staffProfile?.staffRole  ?? null,
+            isApproved: prismaUser.staffProfile?.isApproved ?? null,
+            actions:    actionsToKebab(effective),
         },
     })
 }

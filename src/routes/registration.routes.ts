@@ -10,6 +10,7 @@ import {
     createRegistration,
     searchTeams,
     markTeamAttendance,
+    changeTeamCompetition,
 } from '../controllers/registration.controller'
 
 const router = Router()
@@ -75,6 +76,14 @@ router.get(
     requireAuth,
     requireAction('VIEW_REGISTRATION_DETAILS'),
     getRegistration
+)
+
+// PATCH /registrations/:teamId/change-competition
+router.patch(
+    '/:teamId/change-competition',
+    requireAuth,
+    requireAction('UPDATE_PARTICIPANT_RECORD'),
+    changeTeamCompetition
 )
 
 export default router

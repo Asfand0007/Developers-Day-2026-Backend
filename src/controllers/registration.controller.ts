@@ -541,3 +541,123 @@ export async function markTeamAttendance(req: AuthRequest, res: Response): Promi
         data: { markedCount: result.length },
     })
 }
+
+// PATCH /registrations/:teamId/change-competition
+
+const changeCompetitionSchema = z.object({
+    newCompetitionId: z.string().min(1, 'New competition ID is required'),
+    force:            z.boolean().optional().default(false),
+})
+
+export async function changeTeamCompetition(req: AuthRequest, res: Response): Promise<void> {
+    const teamId = String(req.params.teamId)
+
+    const parsed = changeCompetitionSchema.safeParse(req.body)
+    if (!parsed.success) {
+        res.status(400).json({ success: false, errors: parsed.error.issues })
+        return
+    }
+
+    const { newCompetitionId, force } = parsed.data
+
+    // Load team with all members and current competition
+    const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        include: {
+            competition: { select: { id: true, name: true, startTime: true, endTime: true } },
+            members: {
+                select: {
+                    participantId: true,
+                    participant:   { select: { fullName: true, cnic: true } },
+                },
+            },
+        },
+    })
+
+    if (!team) {
+        res.status(404).json({ success: false, message: 'Team not found.' })
+        return
+    }
+
+    if (team.competitionId === newCompetitionId) {
+        res.status(400).json({ success: false, message: 'Team is already in this competition.' })
+        return
+    }
+
+    // Validate new competition
+    const newComp = await prisma.competition.findUnique({
+        where: { id: newCompetitionId },
+        select: { id: true, name: true, startTime: true, endTime: true, minTeamSize: true, maxTeamSize: true },
+    })
+
+    if (!newComp) {
+        res.status(404).json({ success: false, message: 'Target competition not found.' })
+        return
+    }
+
+    // Validate team size against new competition constraints
+    const memberCount = team.members.length
+    if (memberCount < newComp.minTeamSize || memberCount > newComp.maxTeamSize) {
+        res.status(400).json({
+            success: false,
+            message: `Team has ${memberCount} member(s), but "${newComp.name}" requires ${newComp.minTeamSize}–${newComp.maxTeamSize}.`,
+        })
+        return
+    }
+
+    // Check for timing clashes for every team member against their OTHER registrations
+    // (exclude the current team being moved, since they are leaving that competition)
+    if (!force) {
+        const participantIds = team.members.map((m) => m.participantId)
+
+        const clashingMembers = await prisma.teamMember.findMany({
+            where: {
+                participantId: { in: participantIds },
+                team: {
+                    id:  { not: teamId }, // exclude the current team
+                    competition: {
+                        id:        { not: newCompetitionId },
+                        startTime: { lt: newComp.endTime },
+                        endTime:   { gt: newComp.startTime },
+                    },
+                },
+            },
+            select: {
+                participant: { select: { fullName: true, cnic: true } },
+                team: {
+                    select: {
+                        name:        true,
+                        competition: { select: { name: true, startTime: true, endTime: true } },
+                    },
+                },
+            },
+        })
+
+        if (clashingMembers.length > 0) {
+            res.status(409).json({
+                success: false,
+                clashes: clashingMembers.map((c) => ({
+                    participantName:  c.participant.fullName,
+                    participantCnic:  c.participant.cnic,
+                    clashTeam:        c.team.name,
+                    clashCompetition: c.team.competition.name,
+                    clashStart:       c.team.competition.startTime,
+                    clashEnd:         c.team.competition.endTime,
+                })),
+            })
+            return
+        }
+    }
+
+    // Perform the competition change
+    await prisma.team.update({
+        where: { id: teamId },
+        data:  { competitionId: newCompetitionId },
+    })
+
+    res.json({
+        success: true,
+        message: `Team moved to "${newComp.name}" successfully.`,
+        data: { teamId, newCompetitionId, newCompetitionName: newComp.name },
+    })
+}
