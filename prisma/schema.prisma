@@ -8,10 +8,235 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-//Enums
+model User {
+  id                           String                  @id @default(uuid())
+  email                        String                  @unique @db.VarChar(255)
+  password                     String?                 @db.VarChar(255)
+  isActive                     Boolean                 @default(true)
+  lastLogin                    DateTime?
+  createdAt                    DateTime                @default(now())
+  updatedAt                    DateTime                @updatedAt
+  type                         UserType                @default(PARTICIPANT)
+  brandAmbassador              BrandAmbassador?
+  company                      Company?
+  markedCompetitionAttendances CompetitionAttendance[] @relation("AttendanceMarkedBy")
+  foodStall                    FoodStall?
+  participant                  Participant?
+  staffProfile                 StaffProfile?
+  actionsGrantedByMe           UserAction[]            @relation("ActionGrantedBy")
+  grantedActions               UserAction[]            @relation("UserGrantedActions")
+
+  @@index([email])
+  @@index([type])
+}
+
+model Participant {
+  id                     String                  @id @default(uuid())
+  userId                 String                  @unique
+  cnic                   String                  @unique @db.VarChar(15)
+  email                  String                  @unique @db.VarChar(255)
+  fullName               String                  @db.VarChar(100)
+  phone                  String?                 @db.VarChar(20)
+  institution            String?                 @db.VarChar(200)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  competitionAttendances CompetitionAttendance[]
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamMembers            TeamMember[]
+
+  @@index([cnic])
+  @@index([email])
+}
+
+model Competition {
+  id                   String    @id @default(uuid())
+  name                 String    @db.VarChar(100)
+  description          String    @default("-")
+  fee                  Decimal   @default(0) @db.Decimal(10, 2)
+  minTeamSize          Int       @default(1)
+  maxTeamSize          Int
+  capacityLimit        Int
+  compDay              DateTime  @db.Date
+  startTime            DateTime
+  endTime              DateTime
+  isActive             Boolean   @default(true)
+  registrationDeadline DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  category             String?
+  earlyBirdFee         Decimal   @default(0) @db.Decimal(10, 2)
+  earlyBirdLimit       Int       @default(0)
+  teams                Team[]
+  venues               Venue[]   @relation("CompetitionToVenue")
+
+  @@index([compDay])
+  @@index([isActive])
+}
+
+model Team {
+  id              String                  @id @default(uuid())
+  competitionId   String
+  name            String                  @db.VarChar(100)
+  referenceId     String                  @unique @db.VarChar(50)
+  paymentStatus   RegistrationStatus      @default(PENDING_PAYMENT)
+  paymentProofUrl String?                 @db.VarChar(500)
+  paymentMethod   PaymentMethod?
+  paymentDate     DateTime?
+  declaredTID     String?                 @db.VarChar(100)
+  amountPaid      Decimal?                @db.Decimal(10, 2)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  isEarlyBird     Boolean                 @default(false)
+  attendance      CompetitionAttendance[]
+  competition     Competition             @relation(fields: [competitionId], references: [id])
+  members         TeamMember[]
+
+  @@index([competitionId])
+  @@index([paymentStatus])
+  @@index([referenceId])
+}
+
+model TeamMember {
+  id            String      @id @default(uuid())
+  teamId        String
+  participantId String
+  isLeader      Boolean     @default(false)
+  joinedAt      DateTime    @default(now())
+  cardIssued    Boolean     @default(false)
+  cardIssuedAt  DateTime?
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, participantId])
+  @@index([teamId])
+  @@index([participantId])
+}
+
+model CompetitionAttendance {
+  id             String           @id @default(uuid())
+  teamId         String
+  participantId  String
+  status         Boolean          @default(false)
+  method         AttendanceMethod
+  markedAt       DateTime         @default(now())
+  notes          String?
+  /// Replaces markedBy string with a real relation to the portal user (staff).
+  markedByUserId String?
+  markedByUser   User?            @relation("AttendanceMarkedBy", fields: [markedByUserId], references: [id])
+  participant    Participant      @relation(fields: [participantId], references: [id])
+  team           Team             @relation(fields: [teamId], references: [id])
+
+  @@unique([teamId, participantId])
+  @@index([teamId])
+  @@index([participantId])
+  @@index([markedAt])
+  @@index([markedByUserId])
+}
+
+model StaffProfile {
+  id            String    @id
+  fullName      String    @db.VarChar(100)
+  nuId          String    @unique @db.VarChar(20)
+  isApproved    Boolean   @default(false)
+  approvedAt    DateTime?
+  assignedBooth String?   @db.VarChar(50)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  staffRole     StaffRole
+  user          User      @relation(fields: [id], references: [id], onDelete: Cascade)
+
+  @@index([nuId])
+  @@index([isApproved])
+  @@index([staffRole])
+}
+
+model Company {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  name         String    @db.VarChar(200)
+  categoryId   String?
+  description  String?
+  website      String?   @db.VarChar(255)
+  contactEmail String?   @db.VarChar(255)
+  contactPhone String?   @db.VarChar(20)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  category     Category? @relation(fields: [categoryId], references: [id])
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+}
+
+model FoodStall {
+  id            String             @id @default(uuid())
+  userId        String             @unique
+  stallName     String             @db.VarChar(100)
+  menuDetails   String?
+  paymentStatus RegistrationStatus @default(PENDING_PAYMENT)
+  stallLocation String?            @db.VarChar(100)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([paymentStatus])
+}
+
+model BrandAmbassador {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  fullName       String   @db.VarChar(100)
+  institute      String   @db.VarChar(200)
+  referralCode   String   @unique @db.VarChar(20)
+  totalReferrals Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  cnic           String   @unique @db.VarChar(15)
+  phone          String?  @db.VarChar(20)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([referralCode])
+  @@index([cnic])
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique @db.VarChar(100)
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  companies   Company[]
+}
+
+model Venue {
+  id           String        @id @default(uuid())
+  name         String        @db.VarChar(100)
+  location     String?       @db.VarChar(200)
+  capacity     Int?
+  facilities   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  competitions Competition[] @relation("CompetitionToVenue")
+}
+
+/// Extra actions granted to a staff user by a super-admin.
+/// Role-default actions are NOT stored here — they are derived at runtime.
+model UserAction {
+  id            String   @id @default(uuid())
+  userId        String
+  action        Action
+  grantedAt     DateTime @default(now())
+  grantedBy     String?
+  grantedByUser User?    @relation("ActionGrantedBy", fields: [grantedBy], references: [id])
+  user          User     @relation("UserGrantedActions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, action])
+  @@index([userId])
+}
+
 enum UserType {
   PARTICIPANT
   STAFF
+  BRAND_AMBASSADOR
 }
 
 /// Roles for STAFF members only (portal permissions / responsibilities)
@@ -66,301 +291,4 @@ enum Action {
   UPDATE_PARTICIPANT_RECORD
   VIEW_AMBASSADOR_DASHBOARD
   MANAGE_AMBASSADORS
-}
-
-
-// USER (Auth / System Identity)
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique @db.VarChar(255)
-  password  String?  @db.VarChar(255)
-
-  type      UserType @default(PARTICIPANT)
-
-  isActive  Boolean  @default(true)
-  lastLogin DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  staffProfile      StaffProfile?
-  participant       Participant?
-
-  company           Company?
-  foodStall         FoodStall?
-  brandAmbassador   BrandAmbassador?
-
-  // attendances marked by this (staff) user
-  markedCompetitionAttendances CompetitionAttendance[] @relation("AttendanceMarkedBy")
-
-  // Extra actions granted to this user by a super-admin
-  grantedActions     UserAction[] @relation("UserGrantedActions")
-  // Actions this user has granted to others (as admin)
-  actionsGrantedByMe UserAction[] @relation("ActionGrantedBy")
-
-  @@index([email])
-  @@index([type])
-}
-
-
-//PARTICIPANTS
-model Participant {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  cnic      String   @unique @db.VarChar(15)
-  email     String   @unique @db.VarChar(255)
-  fullName  String   @db.VarChar(100)
-  phone     String?  @db.VarChar(20)
-  institution String? @db.VarChar(200)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  teamMembers              TeamMember[]
-  competitionAttendances   CompetitionAttendance[]
-
-  @@index([cnic])
-  @@index([email])
-}
-
-
-//Competitions
-model Competition {
-  id             String   @id @default(uuid())
-  name           String   @db.VarChar(100)
-  category       String?  @db.Text
-  description    String   @db.Text @default("-")
-  venues         Venue[]
-
-  earlyBirdFee   Decimal  @default(0) @db.Decimal(10,2)
-  fee            Decimal  @default(0) @db.Decimal(10,2)
-  minTeamSize    Int      @default(1)
-  maxTeamSize    Int
-  earlyBirdLimit Int      @default(0)
-  capacityLimit  Int
-
-  compDay        DateTime @db.Date
-  startTime      DateTime
-  endTime        DateTime
-
-  isActive       Boolean  @default(true)
-  registrationDeadline DateTime?
-
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  teams          Team[]
-
-  @@index([compDay])
-  @@index([isActive])
-}
-
-
-//Teams (Registration Instance)
-model Team {
-  id              String   @id @default(uuid())
-  competitionId   String
-  competition     Competition @relation(fields: [competitionId], references: [id])
-
-  name            String   @db.VarChar(100)
-  referenceId     String   @unique @db.VarChar(50)
-
-  paymentStatus   RegistrationStatus @default(PENDING_PAYMENT)
-  paymentProofUrl String?  @db.VarChar(500)
-  paymentMethod   PaymentMethod?
-  paymentDate     DateTime?
-  declaredTID     String?  @db.VarChar(100)
-  amountPaid      Decimal? @db.Decimal(10,2)
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  members         TeamMember[]
-  attendance      CompetitionAttendance[]
-
-  @@index([competitionId])
-  @@index([paymentStatus])
-  @@index([referenceId])
-}
-
-
-//Team Members
-model TeamMember {
-  id            String   @id @default(uuid())
-  teamId        String
-  participantId String
-
-  team           Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  participant    Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
-
-  isLeader      Boolean @default(false)
-  joinedAt      DateTime @default(now())
-
-  cardIssued    Boolean @default(false)
-  cardIssuedAt  DateTime?
-
-  @@unique([teamId, participantId])
-  @@index([teamId])
-  @@index([participantId])
-}
-
-
-//attendance
-model CompetitionAttendance {
-  id            String   @id @default(uuid())
-  teamId        String
-  participantId String
-
-  team           Team        @relation(fields: [teamId], references: [id])
-  participant    Participant @relation(fields: [participantId], references: [id])
-
-  status        Boolean  @default(false)
-  method        AttendanceMethod
-
-  /// Replaces markedBy string with a real relation to the portal user (staff).
-  markedByUserId String?
-  markedByUser   User?    @relation("AttendanceMarkedBy", fields: [markedByUserId], references: [id], onDelete: SetNull)
-
-  markedAt      DateTime @default(now())
-  notes         String?  @db.Text
-
-  @@unique([teamId, participantId])
-  @@index([teamId])
-  @@index([participantId])
-  @@index([markedAt])
-  @@index([markedByUserId])
-}
-
-
-// staff / admin profile
-model StaffProfile {
-  id          String   @id
-  user        User     @relation(fields: [id], references: [id], onDelete: Cascade)
-
-  fullName    String   @db.VarChar(100)
-  nuId        String   @unique @db.VarChar(20)
-
-  staffRole   StaffRole
-
-  isApproved  Boolean  @default(false)
-  approvedAt  DateTime?
-  assignedBooth String? @db.VarChar(50)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([nuId])
-  @@index([isApproved])
-  @@index([staffRole])
-}
-
-
-//companies
-model Company {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  name        String   @db.VarChar(200)
-  categoryId  String?
-  category    Category? @relation(fields: [categoryId], references: [id])
-
-  description String?  @db.Text
-  website     String?  @db.VarChar(255)
-  contactEmail String? @db.VarChar(255)
-  contactPhone String? @db.VarChar(20)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([categoryId])
-}
-
-
-//food stalls
-model FoodStall {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  stallName   String   @db.VarChar(100)
-  menuDetails String?  @db.Text
-  paymentStatus RegistrationStatus @default(PENDING_PAYMENT)
-  stallLocation String? @db.VarChar(100)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([paymentStatus])
-}
-
-
-//brand ambassadors
-model BrandAmbassador {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  fullName  String   @db.VarChar(100)
-  cnic      String   @unique @db.VarChar(15)
-  institute String   @db.VarChar(200)
-  referralCode String @unique @db.VarChar(20)
-
-  totalReferrals Int @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([referralCode])
-  @@index([cnic])
-}
-
-
-//categories
-model Category {
-  id        String   @id @default(uuid())
-  name      String   @unique @db.VarChar(100)
-  description String? @db.Text
-
-  companies Company[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-
-//venue
-model Venue {
-  id        String   @id @default(uuid())
-  name      String   @db.VarChar(100)
-  location  String?  @db.VarChar(200)
-  capacity  Int?
-  facilities String? @db.Text
-
-  competitions Competition[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-
-/// Extra actions granted to a staff user by a super-admin.
-/// Role-default actions are NOT stored here — they are derived at runtime.
-model UserAction {
-  id        String   @id @default(uuid())
-
-  userId    String
-  user      User     @relation("UserGrantedActions", fields: [userId], references: [id], onDelete: Cascade)
-
-  action    Action
-
-  grantedAt DateTime @default(now())
-
-  grantedBy     String?
-  grantedByUser User?  @relation("ActionGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
-
-  @@unique([userId, action])
-  @@index([userId])
 }

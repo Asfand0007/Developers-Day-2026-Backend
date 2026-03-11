@@ -16,6 +16,7 @@ const publicRegistrationSchema = z.object({
     competitionId:    z.string().min(1, 'Competition ID is required'),
     teamName:         z.string().min(1, 'Team name is required'),
     referenceCode:    z.string().optional().default(''),
+    isEarlyBird:      z.enum(['true', 'false']).optional().default('false'),
     leaderFullName:   z.string().min(1, 'Leader name is required'),
     leaderEmail:      z.string().email('Leader email is invalid'),
     leaderCnic:       z.string().min(13, 'Leader CNIC must be at least 13 characters'),
@@ -75,6 +76,7 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
         competitionId,
         teamName,
         referenceCode,
+        isEarlyBird: isEarlyBirdRaw,
         leaderFullName,
         leaderEmail,
         leaderCnic,
@@ -82,6 +84,8 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
         leaderInstitution,
         members: membersRaw,
     } = parsed.data
+
+    const isEarlyBird = isEarlyBirdRaw === 'true'
 
     const extraMembers = parseMembers(membersRaw)
 
@@ -236,6 +240,22 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
 
             const referenceId = refToUse || generateReferenceId()
 
+            const seatUpdate = isEarlyBird
+                ? await tx.competition.updateMany({
+                      where: { id: competitionId, earlyBirdLimit: { gt: 0 } },
+                      data: { earlyBirdLimit: { decrement: 1 } },
+                  })
+                : await tx.competition.updateMany({
+                      where: { id: competitionId, capacityLimit: { gt: 0 } },
+                      data: { capacityLimit: { decrement: 1 } },
+                  })
+
+            if (seatUpdate.count !== 1) {
+                const err = new Error(isEarlyBird ? 'EARLY_BIRD_FULL' : 'CAPACITY_FULL') as Error & { code: string }
+                err.code = isEarlyBird ? 'EARLY_BIRD_FULL' : 'CAPACITY_FULL'
+                throw err
+            }
+
             const team = await tx.team.create({
                 data: {
                     name:            teamName,
@@ -243,6 +263,7 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
                     referenceId,
                     paymentStatus:   RegistrationStatus.PENDING_PAYMENT,
                     paymentProofUrl: paymentProofUrl,
+                    isEarlyBird,
                     members: {
                         create: participantIds.map((p) => ({
                             participantId: p.participantId,
@@ -277,6 +298,19 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
         })
     } catch (error: any) {
         console.error('[createPublicRegistration] Failed to create registration:', error)
+
+        if (error?.code === 'EARLY_BIRD_FULL' || String(error?.message || '') === 'EARLY_BIRD_FULL') {
+            res.status(409).json({
+                success: false,
+                message: 'Early Bird seats are full. Please register without Early Bird and pay the full amount.',
+            })
+            return
+        }
+
+        if (error?.code === 'CAPACITY_FULL' || String(error?.message || '') === 'CAPACITY_FULL') {
+            res.status(409).json({ success: false, message: 'Module seats are full. Please register for a different module.' })
+            return
+        }
 
         if (error?.code === 'EMAIL_TAKEN' || error?.message?.startsWith('EMAIL_TAKEN:')) {
             const email = error?.message?.split(':')[1] || 'this email'
