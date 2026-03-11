@@ -6,6 +6,7 @@ import { requireAction } from '../middleware/permission'
 import {
     listCompetitions,
     listCompetitionsWithCategory,
+    getPublicCompetitionById,
     updateCompetitionTime,
     updateCompetitionVenues,
 } from '../controllers/competition.controller'
@@ -14,6 +15,9 @@ const router = Router()
 
 // GET /competitions/public — public list with category
 router.get('/public', listCompetitionsWithCategory)
+
+// GET /competitions/public/:id — public competition detail
+router.get('/public/:id', getPublicCompetitionById)
 
 // GET /competitions — admin list of competitions
 router.get('/', requireAuth, requireAction('EDIT_COMPETITION'), listCompetitions)

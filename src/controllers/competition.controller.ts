@@ -71,6 +71,54 @@ export async function listCompetitionsWithCategory(_req: Request, res: Response)
     })
 }
 
+// GET /competitions/public/:id — public competition detail (no auth)
+
+export async function getPublicCompetitionById(req: Request, res: Response): Promise<void> {
+    const id = String(req.params.id)
+
+    try {
+        const competition = await prisma.competition.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                name: true,
+                category: true,
+                description: true,
+                fee: true,
+                capacityLimit: true,
+                earlyBirdFee: true,
+                earlyBirdLimit: true,
+                minTeamSize: true,
+                maxTeamSize: true,
+            },
+        })
+
+        if (!competition) {
+            res.status(404).json({ success: false, message: 'Competition not found.' })
+            return
+        }
+
+        res.json({
+            success: true,
+            data: {
+                id: competition.id,
+                name: competition.name,
+                category: String(competition.category ?? ''),
+                description: competition.description ?? null,
+                fee: Number(competition.fee),
+                capacityLimit: competition.capacityLimit,
+                earlyBirdFee: Number(competition.earlyBirdFee),
+                earlyBirdLimit: competition.earlyBirdLimit,
+                minTeamSize: competition.minTeamSize,
+                maxTeamSize: competition.maxTeamSize,
+            },
+        })
+    } catch (error: any) {
+        const message = error?.message || 'Failed to fetch competition.'
+        res.status(500).json({ success: false, message })
+    }
+}
+
 // PATCH /competitions/:id/time — update start/end time
 
 export async function updateCompetitionTime(req: AuthRequest, res: Response): Promise<void> {
