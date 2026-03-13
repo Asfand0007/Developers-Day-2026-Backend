@@ -1,10 +1,15 @@
 import { Router } from 'express'
-import { createPublicRegistration, listPublicRegistrations } from '../controllers/webRegistration.controller'
+import {
+    checkRegistrationConflicts,
+    createPublicRegistration,
+    listPublicRegistrations,
+} from '../controllers/webRegistration.controller'
 import { parsePaymentScreenshot, uploadPaymentProof } from '../middleware/uploadPaymentProof'
 import { verifyTurnstileToken } from '../middleware/turnstile'
 
 const router = Router()
 
+router.post('/conflicts', checkRegistrationConflicts)
 router.get('/', listPublicRegistrations)
 
 router.post(

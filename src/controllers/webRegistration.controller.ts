@@ -404,3 +404,121 @@ export async function listPublicRegistrations(_req: Request, res: Response): Pro
     })
 }
 
+const conflictCheckSchema = z.object({
+    competitionId: z.string().min(1, 'Competition ID is required'),
+    leaderCnic:    z.string().min(13, 'Leader CNIC must be at least 13 characters').optional().default(''),
+    members:       z.string().optional().default(''),
+})
+
+export async function checkRegistrationConflicts(req: Request, res: Response): Promise<void> {
+    const parsed = conflictCheckSchema.safeParse(req.body)
+    if (!parsed.success) {
+        res.status(400).json({ success: false, errors: parsed.error.issues })
+        return
+    }
+
+    const { competitionId, leaderCnic, members: membersRaw } = parsed.data
+
+    const competition = await prisma.competition.findUnique({
+        where: { id: competitionId },
+        select: { id: true, startTime: true, endTime: true },
+    })
+
+    if (!competition) {
+        res.status(404).json({ success: false, message: 'Competition not found.' })
+        return
+    }
+
+    const parsedMembers = parseMembersStrict(membersRaw)
+    if (!parsedMembers.ok) {
+        res.status(400).json({ success: false, errors: parsedMembers.issues })
+        return
+    }
+
+    const allCnics = [
+        ...(leaderCnic ? [normalizeCnic(leaderCnic)] : []),
+        ...parsedMembers.members.map((m) => normalizeCnic(m.cnic)),
+    ]
+
+    if (allCnics.length === 0) {
+        res.json({ success: true, conflicts: [] })
+        return
+    }
+
+    const participants = await prisma.participant.findMany({
+        where: { cnic: { in: allCnics } },
+        select: { id: true, fullName: true, cnic: true, email: true },
+    })
+
+    if (participants.length === 0) {
+        res.json({ success: true, conflicts: [] })
+        return
+    }
+
+    const participantIds = participants.map((p) => p.id)
+
+    const teamMembers = await prisma.teamMember.findMany({
+        where: {
+            participantId: { in: participantIds },
+            team: { competitionId: { not: competitionId } },
+        },
+        include: {
+            participant: { select: { id: true, fullName: true, cnic: true, email: true } },
+            team: {
+                select: {
+                    id: true,
+                    name: true,
+                    competition: {
+                        select: {
+                            id: true,
+                            name: true,
+                            compDay: true,
+                            startTime: true,
+                            endTime: true,
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+    const currentStart = competition.startTime.getTime()
+    const currentEnd = competition.endTime.getTime()
+
+    const conflicts = teamMembers
+        .map((tm) => {
+            const otherComp = tm.team.competition
+            // If competition record is missing, skip
+            if (!otherComp) return null
+
+            const otherStart = otherComp.startTime.getTime()
+            const otherEnd = otherComp.endTime.getTime()
+
+            const isOverlap = currentStart < otherEnd && otherStart < currentEnd
+            if (!isOverlap) return null
+
+            return {
+                participant: {
+                    id:        tm.participant.id,
+                    fullName:  tm.participant.fullName,
+                    cnic:      tm.participant.cnic,
+                    email:     tm.participant.email,
+                },
+                competition: {
+                    id:        otherComp.id,
+                    name:      otherComp.name,
+                    compDay:   otherComp.compDay,
+                    startTime: otherComp.startTime,
+                    endTime:   otherComp.endTime,
+                },
+                team: {
+                    id:   tm.team.id,
+                    name: tm.team.name,
+                },
+            }
+        })
+        .filter(Boolean)
+
+    res.json({ success: true, conflicts })
+}
+
