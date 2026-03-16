@@ -109,7 +109,7 @@ model TeamMember {
   cardIssuedAt  DateTime?
   participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
   team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamEmails    TeamEmails[]
+  teamEmailsQueue  TeamEmailsQueue[]
   @@unique([teamId, participantId])
   @@index([teamId])
   @@index([participantId])
@@ -212,18 +212,31 @@ model Category {
 
 model TeamEmails {
   id               String   @id @default(uuid())
-  teamId           String
-  teamMemberId     String   
+  teamId           String 
   status           String?  @default("first_time")
   welcomeSent      Boolean  @default(false)
   verificationSent Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now())
   team             Team     @relation(fields: [teamId], references: [id])
-  teamMember      TeamMember @relation(fields: [teamMemberId], references: [id])
 
   @@index([teamId])
-  @@index([teamMemberId])
+}
+
+model TeamEmailsQueue {
+  id               String   @id @default(uuid())
+  teamMemberId     String    @unique   
+  retryCount       Int       @default(0)
+  failedReason     String?
+  sendWelcome      Boolean  @default(true)
+  sendRejection    Boolean  @default(false)
+  sendAccept       Boolean  @default(false)
+  sendOnHold       Boolean  @default(false)
+  noteOnHold       String?
+  noteRejection    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now())
+  teamMember       TeamMember @relation(fields: [teamMemberId], references: [id])
 }
 model Venue {
   id           String        @id @default(uuid())
@@ -271,6 +284,7 @@ enum StaffRole {
 enum RegistrationStatus {
   PENDING_PAYMENT
   VERIFIED
+  ONHOLD
   REJECTED
 }
 
