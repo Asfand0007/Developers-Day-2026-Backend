@@ -4,6 +4,12 @@ import { prisma } from '../config/db'
 import { Prisma, RegistrationStatus, PaymentMethod, AttendanceMethod } from '@prisma/client'
 import { z } from 'zod'
 
+
+function normalizeCnic(value: string): string {
+    return value.replace(/\D/g, '')
+}
+
+
 // GET /registrations/competitions 
 
 export async function listCompetitions(_req: AuthRequest, res: Response): Promise<void> {
@@ -152,6 +158,48 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
     })
 }
 
+const paymentStatusUpdateSchema = z.object({
+    status: z.nativeEnum(RegistrationStatus),
+    note:   z.string().optional(),
+})
+
+export async function updateTeamPaymentStatus(req: AuthRequest, res: Response): Promise<void> {
+    const teamId = String(req.params.teamId)
+
+    const parsed = paymentStatusUpdateSchema.safeParse(req.body)
+    if (!parsed.success) {
+        res.status(400).json({ success: false, errors: parsed.error.issues })
+        return
+    }
+
+    const { status, note } = parsed.data
+
+    const team = await prisma.team.findUnique({ where: { id: teamId } })
+    if (!team) {
+        res.status(404).json({ success: false, message: 'Registration not found.' })
+        return
+    }
+
+    await prisma.$transaction(async (tx) => {
+        await tx.team.update({
+            where: { id: teamId },
+            data: { paymentStatus: status },
+        })
+
+        //transaction for note insert
+
+    })
+
+    res.json({
+        success: true,
+        data: {
+            id:            teamId,
+            paymentStatus: status,
+            note:          note || null,
+        },
+    })
+}
+
 //  GET /registrations/competitions-form
 
 export async function listCompetitionsForForm(_req: AuthRequest, res: Response): Promise<void> {
@@ -254,10 +302,11 @@ const memberSchema = z.object({
 const createRegistrationSchema = z.object({
     teamName:      z.string().min(1, 'Team name is required'),
     competitionId: z.string().min(1, 'Competition ID is required'),
-    referenceId:   z.string().min(1, 'Reference ID is required'),
+    referenceId:   z.string().optional(),
     paymentMethod: z.nativeEnum(PaymentMethod),
     amountPaid:    z.string().min(1, 'Amount paid is required'),
     members:       z.array(memberSchema).min(1, 'At least one member is required'),
+    isEarlyBird:   z.boolean().default(false)
 })
 
 export async function createRegistration(req: AuthRequest, res: Response): Promise<void> {
@@ -267,7 +316,33 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
         return
     }
 
-    const { teamName, competitionId, referenceId, paymentMethod, amountPaid, members } = parsed.data
+    const { teamName, competitionId, referenceId, paymentMethod, amountPaid, members, isEarlyBird } = parsed.data
+
+
+    const allCnics = [
+        ...members.map((m) => normalizeCnic(m.cnic)),
+    ]
+
+    if (allCnics.length !== new Set(allCnics).size) {
+        res.status(400).json({
+            success: false,
+            message: 'Duplicate CNIC in team members. Each participant must have a unique CNIC.',
+        })
+        return
+    }
+
+    const allEmails = [
+        ...members.map((m) => m.email.trim().toLowerCase()),
+    ]
+
+    if (allEmails.length !== new Set(allEmails).size) {
+        res.status(400).json({
+            success: false,
+            message: 'Duplicate email in team members. Each participant must have a unique email.',
+        })
+        return
+    }
+
 
     // Validate competition exists
     const competition = await prisma.competition.findUnique({
@@ -296,7 +371,27 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
         return
     }
 
-  
+    const existingInCompetition = await prisma.teamMember.findMany({
+        where: {
+            team: { competitionId },
+            OR: [
+                { participant: { cnic: { in: allCnics } } },
+                { participant: { email: { in: allEmails } } },
+            ],
+        },
+        select: {
+            participant: { select: { fullName: true, cnic: true, email: true } },
+        },
+    })
+
+    if (existingInCompetition.length > 0) {
+        const names = existingInCompetition.map((r) => r.participant.fullName).join(', ')
+        res.status(409).json({
+            success: false,
+            message: `One or more team members are already registered for this competition: ${names}`,
+        })
+        return
+    }
   
 
     // Upsert participants and build team in a transaction
@@ -348,12 +443,50 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
             participantIds.push({ participantId: participant.id, isLeader: m.isLeader })
         }
 
+        const asfandCode = 'asfand_code'
+        const refToUse = referenceId?.trim() || asfandCode;
+
+        let referenceCode = ''
+
+        if (refToUse!== asfandCode) {
+            const ba = await tx.brandAmbassador.findUnique({
+                where: { referralCode: refToUse },
+                select: { id: true },
+            })
+
+            if (!ba) {
+                const err = new Error('BA_CODE_INVALID') as Error & { code: string }
+                err.code = 'BA_CODE_INVALID'
+                throw err
+            }
+
+            referenceCode = refToUse
+        } else {
+            referenceCode = asfandCode
+        }
+
+        const seatUpdate = isEarlyBird
+            ? await tx.competition.updateMany({
+                    where: { id: competitionId, earlyBirdLimit: { gt: -2 } },
+                    data: { earlyBirdLimit: { decrement: 1 } },
+                })
+            : await tx.competition.updateMany({
+                    where: { id: competitionId, capacityLimit: { gt: -2 } },
+                    data: { capacityLimit: { decrement: 1 } },
+                })
+
+        if (seatUpdate.count !== 1) {
+            const err = new Error(isEarlyBird ? 'EARLY_BIRD_FULL' : 'CAPACITY_FULL') as Error & { code: string }
+            err.code = isEarlyBird ? 'EARLY_BIRD_FULL' : 'CAPACITY_FULL'
+            throw err
+        }
+
         // Create team
         const team = await tx.team.create({
             data: {
                 name:          teamName,
                 competitionId,
-                referenceId,
+                referenceId: referenceCode,
                 paymentStatus: 'VERIFIED',
                 paymentMethod,
                 amountPaid:    parseFloat(amountPaid),
@@ -390,11 +523,6 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
 
 export async function searchTeams(req: AuthRequest, res: Response): Promise<void> {
     const query = (req.query.q as string)?.trim() ?? ''
-
-    if (!query) {
-        res.json({ success: true, data: [] })
-        return
-    }
 
     // Search by team ID, team name, or leader name
     const teams = await prisma.team.findMany({
