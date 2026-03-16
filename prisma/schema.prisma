@@ -127,7 +127,7 @@ model CompetitionAttendance {
   markedByUserId String?
   markedByUser   User?            @relation("AttendanceMarkedBy", fields: [markedByUserId], references: [id])
   participant    Participant      @relation(fields: [participantId], references: [id])
-  team           Team             @relation(fields: [teamId], references: [id])
+  team           Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, participantId])
   @@index([teamId])
