@@ -65,6 +65,7 @@ model Competition {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   category             String?
+  ruleBookUrl          String?
   earlyBirdFee         Decimal   @default(0) @db.Decimal(10, 2)
   earlyBirdLimit       Int       @default(0)
   teams                Team[]
