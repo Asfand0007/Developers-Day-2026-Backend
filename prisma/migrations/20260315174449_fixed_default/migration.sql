@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "TeamEmails" ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP;

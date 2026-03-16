@@ -66,6 +66,7 @@ export async function listCompetitionsWithCategory(_req: Request, res: Response)
             capacityLimit: c.capacityLimit,
             earlyBirdFee:   Number(c.earlyBirdFee),
             earlyBirdLimit: c.earlyBirdLimit,
+            ruleBookUrl:    c.ruleBookUrl,
             minTeamSize: c.minTeamSize,
             maxTeamSize: c.maxTeamSize,
             startTime: c.startTime ? c.startTime.toISOString() : null,
