@@ -109,7 +109,7 @@ model TeamMember {
   cardIssuedAt  DateTime?
   participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
   team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
-
+  teamEmails    TeamEmails[]
   @@unique([teamId, participantId])
   @@index([teamId])
   @@index([participantId])
@@ -213,14 +213,17 @@ model Category {
 model TeamEmails {
   id               String   @id @default(uuid())
   teamId           String
+  teamMemberId     String   
   status           String?  @default("first_time")
   welcomeSent      Boolean  @default(false)
   verificationSent Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now())
   team             Team     @relation(fields: [teamId], references: [id])
+  teamMember      TeamMember @relation(fields: [teamMemberId], references: [id])
 
   @@index([teamId])
+  @@index([teamMemberId])
 }
 model Venue {
   id           String        @id @default(uuid())
