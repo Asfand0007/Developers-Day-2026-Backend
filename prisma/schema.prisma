@@ -236,7 +236,7 @@ model TeamEmailsQueue {
   noteRejection    String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now())
-  teamMember       TeamMember @relation(fields: [teamMemberId], references: [id])
+  teamMember       TeamMember @relation(fields: [teamMemberId], references: [id], onDelete:Cascade )
 }
 model Venue {
   id           String        @id @default(uuid())
@@ -284,6 +284,7 @@ enum StaffRole {
 enum RegistrationStatus {
   PENDING_PAYMENT
   VERIFIED
+  FREE
   ONHOLD
   REJECTED
 }
