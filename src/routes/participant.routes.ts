@@ -1,7 +1,10 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/auth'
 import { requireAction } from '../middleware/permission'
-import { getParticipantByEmail } from '../controllers/participant.controller'
+import {
+    getParticipantByEmail,
+    updateParticipantRecord,
+} from '../controllers/participant.controller'
 
 const router = Router()
 
@@ -11,6 +14,14 @@ router.get(
     requireAuth,
     requireAction('UPDATE_PARTICIPANT_RECORD'),
     getParticipantByEmail
+)
+
+// PATCH /participants/:id
+router.patch(
+    '/:id',
+    requireAuth,
+    requireAction('UPDATE_PARTICIPANT_RECORD'),
+    updateParticipantRecord
 )
 
 export default router

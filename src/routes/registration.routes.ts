@@ -11,9 +11,17 @@ import {
     searchTeams,
     markTeamAttendance,
     changeTeamCompetition,
+    updateTeamPaymentStatus,
 } from '../controllers/registration.controller'
 
 const router = Router()
+// PATCH /registrations/:teamId/payment-status
+router.patch(
+    '/:teamId/payment-status',
+    requireAuth,
+    requireAction('UPDATE_PARTICIPANT_RECORD'),
+    updateTeamPaymentStatus
+)
 
 router.get(
     '/competitions',
@@ -61,6 +69,8 @@ router.get(
     requireAction('UPDATE_ATTENDANCE'),
     searchTeams
 )
+
+
 
 // POST /registrations/:teamId/mark-attendance
 router.post(
