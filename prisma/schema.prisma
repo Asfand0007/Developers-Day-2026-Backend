@@ -109,7 +109,7 @@ model TeamMember {
   cardIssuedAt  DateTime?
   participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
   team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
-
+  teamEmailsQueue  TeamEmailsQueue[]
   @@unique([teamId, participantId])
   @@index([teamId])
   @@index([participantId])
@@ -127,7 +127,7 @@ model CompetitionAttendance {
   markedByUserId String?
   markedByUser   User?            @relation("AttendanceMarkedBy", fields: [markedByUserId], references: [id])
   participant    Participant      @relation(fields: [participantId], references: [id])
-  team           Team             @relation(fields: [teamId], references: [id])
+  team           Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, participantId])
   @@index([teamId])
@@ -212,7 +212,7 @@ model Category {
 
 model TeamEmails {
   id               String   @id @default(uuid())
-  teamId           String
+  teamId           String 
   status           String?  @default("first_time")
   welcomeSent      Boolean  @default(false)
   verificationSent Boolean  @default(false)
@@ -221,6 +221,22 @@ model TeamEmails {
   team             Team     @relation(fields: [teamId], references: [id])
 
   @@index([teamId])
+}
+
+model TeamEmailsQueue {
+  id               String   @id @default(uuid())
+  teamMemberId     String    @unique   
+  retryCount       Int       @default(0)
+  failedReason     String?
+  sendWelcome      Boolean  @default(true)
+  sendRejection    Boolean  @default(false)
+  sendAccept       Boolean  @default(false)
+  sendOnHold       Boolean  @default(false)
+  noteOnHold       String?
+  noteRejection    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now())
+  teamMember       TeamMember @relation(fields: [teamMemberId], references: [id], onDelete:Cascade )
 }
 model Venue {
   id           String        @id @default(uuid())
@@ -268,6 +284,8 @@ enum StaffRole {
 enum RegistrationStatus {
   PENDING_PAYMENT
   VERIFIED
+  FREE
+  ONHOLD
   REJECTED
 }
 
