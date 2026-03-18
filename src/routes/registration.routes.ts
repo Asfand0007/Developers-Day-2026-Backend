@@ -15,13 +15,6 @@ import {
 } from '../controllers/registration.controller'
 
 const router = Router()
-// PATCH /registrations/:teamId/payment-status
-router.patch(
-    '/:teamId/payment-status',
-    requireAuth,
-    requireAction('UPDATE_PARTICIPANT_RECORD'),
-    updateTeamPaymentStatus
-)
 
 router.get(
     '/competitions',
@@ -86,6 +79,14 @@ router.get(
     requireAuth,
     requireAction('VIEW_REGISTRATION_DETAILS'),
     getRegistration
+)
+
+// PATCH /registrations/:teamId/payment-status
+router.patch(
+    '/:teamId/payment-status',
+    requireAuth,
+    requireAction('UPDATE_PARTICIPANT_RECORD'),
+    updateTeamPaymentStatus
 )
 
 // PATCH /registrations/:teamId/change-competition
