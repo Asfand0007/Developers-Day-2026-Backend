@@ -1,4 +1,4 @@
-import { Response } from 'express'
+import { Request, Response } from 'express'
 import { prisma } from '../config/db'
 import { UserType } from '@prisma/client'
 import { AuthRequest } from '../middleware/auth'
@@ -10,6 +10,69 @@ function generateReferralCode(): string {
     const rand6 = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
     return `${rand6}-DD26`
 }
+
+// ─── GET public/ambassadors ────────────────────────────────────────────────────────
+
+export const getAllBrandAmbassadorsPublic = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ambassadors = await prisma.brandAmbassador.findMany({
+      select: {
+        id: true,
+        fullName: true,
+        institute: true,
+        referralCode: true,
+        phone: true,
+        cnic: true,
+        createdAt: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Count teams per referral code in a single aggregation query
+    const referralCounts = await prisma.team.groupBy({
+      by: ["referenceId"],
+      _count: {
+        id: true,
+      },
+    });
+
+    // Build a lookup map: referralCode -> teamCount
+    const countMap = new Map<string, number>(
+      referralCounts.map(({ referenceId, _count }) => [
+        referenceId,
+        _count.id,
+      ])
+    );
+
+    const data = ambassadors.map((ambassador) => ({
+      id: ambassador.id,
+      fullName: ambassador.fullName,
+      email: ambassador.user.email,
+      institute: ambassador.institute,
+      phone: ambassador.phone ?? null,
+      cnic: ambassador.cnic,
+      referralCode: ambassador.referralCode,
+      teamCount: countMap.get(ambassador.referralCode) ?? 0,
+      createdAt: ambassador.createdAt,
+    }));
+
+    res.status(200).json({
+      success: true,
+      total: data.length,
+      data,
+    });
+  } catch (error) {
+    console.error("[getAllBrandAmbassadors]", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch brand ambassadors",
+    });
+  }
+};
 
 // ─── GET /ambassadors ────────────────────────────────────────────────────────
 

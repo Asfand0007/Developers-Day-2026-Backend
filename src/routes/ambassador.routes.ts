@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/auth'
 import { requireAction } from '../middleware/permission'
 import {
+    getAllBrandAmbassadorsPublic,
     listAmbassadors,
     createAmbassador,
     updateAmbassador,
@@ -9,6 +10,9 @@ import {
 } from '../controllers/ambassador.controller'
 
 const router = Router()
+
+// GET /abassadors/public — list ambassadors (no auth)
+router.get('/public', getAllBrandAmbassadorsPublic)
 
 // GET  /ambassadors       — list all brand ambassadors
 router.get('/',    requireAuth, requireAction('VIEW_AMBASSADOR_DASHBOARD'), listAmbassadors)

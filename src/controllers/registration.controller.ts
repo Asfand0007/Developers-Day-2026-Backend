@@ -120,6 +120,17 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
         },
     })
 
+    const teamEmailQueue = await prisma.teamEmailsQueue.findMany({
+        where: { teamMember: { teamId: id } },
+        select: {
+            noteRejection: true,
+            noteOnHold: true,
+        },
+    })
+
+    const note = teamEmailQueue.length > 0        ? teamEmailQueue[0].noteRejection || teamEmailQueue[0].noteOnHold || ''
+        : null
+
     if (!team) {
         res.status(404).json({ success: false, message: 'Registration not found.' })
         return
@@ -140,6 +151,7 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
             createdAt:       team.createdAt,
             updatedAt:       team.updatedAt,
             competition:     team.competition,
+            note:      note,
             members: team.members.map((m) => {
                 const att = team.attendance.find((a) => a.participantId === m.participantId)
                 return {
@@ -174,7 +186,10 @@ export async function updateTeamPaymentStatus(req: AuthRequest, res: Response): 
 
     const { status, note } = parsed.data
 
-    const team = await prisma.team.findUnique({ where: { id: teamId } })
+    const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        include: { members: { select: { id: true } } },
+    })
     if (!team) {
         res.status(404).json({ success: false, message: 'Registration not found.' })
         return
@@ -186,7 +201,20 @@ export async function updateTeamPaymentStatus(req: AuthRequest, res: Response): 
             data: { paymentStatus: status },
         })
 
-        //transaction for note insert
+        const teamMemberIds = team.members.map((m) => m.id)
+        if (teamMemberIds.length > 0) {
+            await tx.teamEmailsQueue.updateMany({
+                where: { teamMemberId: { in: teamMemberIds } },
+                data: {
+                    sendRejection: status === 'REJECTED',
+                    sendOnHold: status === 'ONHOLD',
+                    sendAccept: status === 'VERIFIED',
+                    noteRejection: status === 'REJECTED' ? note : null,
+                    noteOnHold: status === 'ONHOLD' ? note : null,
+                    updatedAt: new Date(),
+                },
+            })
+        }
 
     })
 
@@ -206,6 +234,7 @@ export async function listCompetitionsForForm(_req: AuthRequest, res: Response):
     const competitions = await prisma.competition.findMany({
         select: {
             id: true, name: true, compDay: true, fee: true,
+            earlyBirdFee: true, earlyBirdLimit: true,
             minTeamSize: true, maxTeamSize: true,
             startTime: true, endTime: true,
         },
@@ -489,6 +518,7 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
                 referenceId: referenceCode,
                 paymentStatus: 'VERIFIED',
                 paymentMethod,
+                isEarlyBird,
                 amountPaid:    parseFloat(amountPaid),
                 paymentDate:   new Date(),
                 members: {
