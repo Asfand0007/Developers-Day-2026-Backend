@@ -210,19 +210,6 @@ model Category {
   companies   Company[]
 }
 
-model TeamEmails {
-  id               String   @id @default(uuid())
-  teamId           String 
-  status           String?  @default("first_time")
-  welcomeSent      Boolean  @default(false)
-  verificationSent Boolean  @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now())
-  team             Team     @relation(fields: [teamId], references: [id])
-
-  @@index([teamId])
-}
-
 model TeamEmailsQueue {
   id               String   @id @default(uuid())
   teamMemberId     String    @unique   
