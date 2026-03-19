@@ -93,7 +93,6 @@ model Team {
   attendance      CompetitionAttendance[]
   competition     Competition             @relation(fields: [competitionId], references: [id])
   members         TeamMember[]
-  teamEmails      TeamEmails[]
   @@index([competitionId])
   @@index([paymentStatus])
   @@index([referenceId])
