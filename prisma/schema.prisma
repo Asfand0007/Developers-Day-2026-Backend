@@ -41,11 +41,13 @@ model Participant {
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   rollNumber             String?                 @db.VarChar(20)
+  minigameCode           String?                 @unique @db.VarChar(20)
   competitionAttendances CompetitionAttendance[]
   activityCompletions    ParticipantActivityCompletion[]
   activitySubmissions    ActivitySubmission[]
   pointsLedgerEntries    PointsLedger[]
   pointsSummary          PointsSummary?
+  scores                 Score[]
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   teamMembers            TeamMember[]
 
@@ -375,6 +377,37 @@ model UserAction {
 
   @@unique([userId, action])
   @@index([userId])
+}
+
+model Minigame {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String   @unique
+  description  String   @default("")
+  isActive     Boolean  @default(true) @map("is_active")
+  apiKeyHash   String?  @unique @map("api_key_hash")
+  apiKeyPrefix String?  @map("api_key_prefix")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  scores Score[]
+}
+
+model Score {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userCode  String   @db.VarChar(20) @map("user_code")
+  gameId    String   @db.Uuid @map("game_id")
+  score     Float
+  playTime  Float    @map("play_time")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participant Participant @relation(fields: [userCode], references: [minigameCode], onDelete: Restrict, onUpdate: Cascade)
+  game        Minigame    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userCode, gameId])
+  @@index([gameId, score(sort: Desc), playTime(sort: Asc)])
 }
 
 enum UserType {

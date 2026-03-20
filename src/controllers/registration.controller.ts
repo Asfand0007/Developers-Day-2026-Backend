@@ -99,6 +99,7 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
                     participant: {
                         select: {
                             id:          true,
+                            minigameCode: true,
                             fullName:    true,
                             email:       true,
                             cnic:        true,
