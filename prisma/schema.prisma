@@ -43,6 +43,7 @@ model Participant {
   rollNumber             String?                 @db.VarChar(20)
   competitionAttendances CompetitionAttendance[]
   activityCompletions    ParticipantActivityCompletion[]
+  activitySubmissions    ActivitySubmission[]
   pointsLedgerEntries    PointsLedger[]
   pointsSummary          PointsSummary?
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -52,20 +53,38 @@ model Participant {
   @@index([email])
 }
 
-model ActivityType {
+model Activity {
   id          String                          @id @default(uuid())
   code        String                          @unique @db.VarChar(50)
   name        String                          @db.VarChar(100)
   description String?
   points      Int
+  activityTypeId String
   isActive    Boolean                         @default(true)
   createdAt   DateTime                        @default(now())
   updatedAt   DateTime                        @updatedAt
   createdByStaffProfileId String?
   updatedByStaffProfileId String?
   completions ParticipantActivityCompletion[]
-  createdBy   StaffProfile?                   @relation("ActivityTypeCreatedBy", fields: [createdByStaffProfileId], references: [id], onDelete: SetNull)
-  updatedBy   StaffProfile?                   @relation("ActivityTypeUpdatedBy", fields: [updatedByStaffProfileId], references: [id], onDelete: SetNull)
+  submissions ActivitySubmission[]
+  type        ActivityType                    @relation(fields: [activityTypeId], references: [id], onDelete: Restrict)
+  createdBy   StaffProfile?                   @relation("ActivityCreatedBy", fields: [createdByStaffProfileId], references: [id], onDelete: SetNull)
+  updatedBy   StaffProfile?                   @relation("ActivityUpdatedBy", fields: [updatedByStaffProfileId], references: [id], onDelete: SetNull)
+
+  @@index([activityTypeId])
+  @@index([isActive])
+}
+
+model ActivityType {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  activities  Activity[]
 
   @@index([isActive])
 }
@@ -73,19 +92,39 @@ model ActivityType {
 model ParticipantActivityCompletion {
   id            String        @id @default(uuid())
   participantId String
-  activityTypeId String
+  activityId    String
+  submissionLink String?
   completedAt   DateTime      @default(now())
   markedByStaffProfileId String
   note          String?
   participant   Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade)
-  activityType  ActivityType  @relation(fields: [activityTypeId], references: [id], onDelete: Restrict)
+  activity      Activity      @relation(fields: [activityId], references: [id], onDelete: Restrict)
   markedBy      StaffProfile  @relation("ActivityCompletionMarkedBy", fields: [markedByStaffProfileId], references: [id], onDelete: Restrict)
   ledgerEntries PointsLedger[]
 
-  @@unique([participantId, activityTypeId])
+  @@unique([participantId, activityId])
   @@index([participantId])
-  @@index([activityTypeId])
+  @@index([activityId])
   @@index([markedByStaffProfileId])
+}
+
+model ActivitySubmission {
+  id                      String           @id @default(uuid())
+  participantId           String
+  activityId              String
+  submissionLink          String
+  status                  SubmissionStatus @default(PENDING)
+  submittedAt             DateTime         @default(now())
+  reviewedAt              DateTime?
+  reviewedByStaffProfileId String?
+  reviewNote              String?
+  participant             Participant      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  activity                Activity         @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  reviewedBy              StaffProfile?    @relation("ActivitySubmissionReviewedBy", fields: [reviewedByStaffProfileId], references: [id], onDelete: SetNull)
+
+  @@index([participantId])
+  @@index([activityId])
+  @@index([status, submittedAt])
 }
 
 model PointsLedger {
@@ -227,9 +266,10 @@ model StaffProfile {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   staffRole     StaffRole
-  createdActivityTypes      ActivityType[]                  @relation("ActivityTypeCreatedBy")
-  updatedActivityTypes      ActivityType[]                  @relation("ActivityTypeUpdatedBy")
+  createdActivities         Activity[]                      @relation("ActivityCreatedBy")
+  updatedActivities         Activity[]                      @relation("ActivityUpdatedBy")
   markedActivityCompletions ParticipantActivityCompletion[] @relation("ActivityCompletionMarkedBy")
+  reviewedActivitySubmissions ActivitySubmission[]          @relation("ActivitySubmissionReviewedBy")
   pointsLedgerActions       PointsLedger[]                  @relation("PointsLedgerActor")
   pointsAuditLogs           PointsAuditLog[]                @relation("PointsAuditActor")
   user          User      @relation(fields: [id], references: [id], onDelete: Cascade)
@@ -387,7 +427,16 @@ enum PointsAuditActionType {
   ACTIVITY_TYPE_TOGGLED
   ACTIVITY_COMPLETION_MARKED
   ACTIVITY_COMPLETION_REVOKED
+  ACTIVITY_SUBMISSION_CREATED
+  ACTIVITY_SUBMISSION_APPROVED
+  ACTIVITY_SUBMISSION_REJECTED
   POINTS_ADJUSTED
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 /// Every discrete operation a portal user can perform.
