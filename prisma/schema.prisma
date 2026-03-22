@@ -380,15 +380,17 @@ model UserAction {
 }
 
 model Minigame {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String   @unique
-  description  String   @default("")
-  isActive     Boolean  @default(true) @map("is_active")
-  apiKeyHash   String?  @unique @map("api_key_hash")
-  apiKeyPrefix String?  @map("api_key_prefix")
-  metadata     Json     @default("{}")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true) @map("is_active")
+  apiKeyHash  String?  @unique @map("api_key_hash")
+  apiKeyPrefix String? @map("api_key_prefix")
+  imageUrl    String?  @map("image_url")
+  location    String?  @db.VarChar(200)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   scores Score[]
 }
