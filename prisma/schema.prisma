@@ -409,7 +409,8 @@ model Score {
   game        Minigame    @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   @@unique([userCode, gameId])
-  @@index([gameId, score(sort: Desc), playTime(sort: Asc)])
+  @@index([gameId, score(sort: Desc), playTime(sort: Asc), updatedAt(sort: Desc)])
+  @@index([gameId, updatedAt(sort: Desc)])
 }
 
 enum UserType {
