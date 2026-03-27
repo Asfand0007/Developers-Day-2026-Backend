@@ -62,6 +62,7 @@ model Activity {
   description String?
   points      Int
   activityTypeId String
+  correctAnswerCanonical String?              @db.VarChar(300)
   isActive    Boolean                         @default(true)
   createdAt   DateTime                        @default(now())
   updatedAt   DateTime                        @updatedAt
@@ -79,6 +80,7 @@ model Activity {
 
 model ActivityType {
   id          String   @id @default(uuid())
+  /// Built-in codes include MANUAL, LINK_BASED, CORRECT_ANSWER, MANUAL_TEXT_SUBMISSION.
   code        String   @unique @db.VarChar(50)
   name        String   @db.VarChar(100)
   description String?
@@ -114,7 +116,8 @@ model ActivitySubmission {
   id                      String           @id @default(uuid())
   participantId           String
   activityId              String
-  submissionLink          String
+  submissionLink          String?
+  submissionText          String?          @db.VarChar(300)
   status                  SubmissionStatus @default(PENDING)
   submittedAt             DateTime         @default(now())
   reviewedAt              DateTime?
@@ -127,6 +130,20 @@ model ActivitySubmission {
   @@index([participantId])
   @@index([activityId])
   @@index([status, submittedAt])
+}
+
+model SignupOtpLink {
+  id          String   @id @default(uuid())
+  email       String   @db.VarChar(255)
+  tokenHash   String   @unique @db.VarChar(128)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  requestedIp String?  @db.VarChar(64)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
 }
 
 model PointsLedger {
