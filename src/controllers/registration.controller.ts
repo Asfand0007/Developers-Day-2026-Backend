@@ -221,7 +221,7 @@ export async function updateTeamPaymentStatus(req: AuthRequest, res: Response): 
             })
         }
 
-    })
+    }, { timeout: 15000 })
 
     res.json({
         success: true,
@@ -576,7 +576,7 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
         })
 
         return team
-        })
+        }, { timeout: 15000 })
 
         res.status(201).json({
             success: true,

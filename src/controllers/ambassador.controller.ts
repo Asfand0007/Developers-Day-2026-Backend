@@ -84,6 +84,20 @@ export async function listAmbassadors(_req: AuthRequest, res: Response): Promise
         orderBy: { fullName: 'asc' },
     })
 
+    const referralCounts = await prisma.team.groupBy({
+      by: ["referenceId"],
+      _count: {
+        id: true,
+      },
+    });
+
+    const countMap = new Map<string, number>(
+      referralCounts.map(({ referenceId, _count }) => [
+        referenceId,
+        _count.id,
+      ])
+    );
+
     res.json({
         success: true,
         data: ambassadors.map((a) => ({
@@ -92,7 +106,7 @@ export async function listAmbassadors(_req: AuthRequest, res: Response): Promise
             cnic:           a.cnic,
             institute:      a.institute,
             referralCode:   a.referralCode,
-            totalReferrals: a.totalReferrals,
+            totalReferrals: countMap.get(a.referralCode) ?? 0,
             email:          a.user.email,
             isActive:       a.user.isActive,
             registeredAt:   a.user.createdAt.toISOString(),
