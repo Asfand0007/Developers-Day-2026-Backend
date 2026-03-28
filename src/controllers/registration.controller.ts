@@ -9,6 +9,10 @@ function normalizeCnic(value: string): string {
     return value.replace(/\D/g, '')
 }
 
+function hasNonEmptyValue(value: string | null | undefined): value is string {
+    return Boolean(value && value.trim())
+}
+
 
 // GET /registrations/competitions 
 
@@ -424,15 +428,17 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
     }
   
 
-    // Upsert participants and build team in a transaction
-    const result = await prisma.$transaction(async (tx) => {
+    try {
+        // Upsert participants and build team in a transaction
+        const result = await prisma.$transaction(async (tx) => {
         // Upsert each participant by CNIC
         const participantIds: { participantId: string; isLeader: boolean }[] = []
 
         for (const m of members) {
+            const normalizedCnic = normalizeCnic(m.cnic)
             // Look up an existing participant by CNIC first (stable identifier)
             let participant = await tx.participant.findUnique({
-                where: { cnic: m.cnic },
+                where: { cnic: normalizedCnic },
                 include: { user: true },
             })
 
@@ -449,25 +455,59 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
                 })
             } else {
                 // No participant with this CNIC — check if a User with this email already exists
-                let user = await tx.user.findUnique({ where: { email: m.email } })
+                const existingUser = await tx.user.findUnique({
+                    where: { email: m.email },
+                    include: { participant: true },
+                })
 
-                if (!user) {
-                    user = await tx.user.create({
+                if (existingUser?.participant) {
+                    const existingParticipant = existingUser.participant
+                    if (normalizedCnic !== existingParticipant.cnic) {
+                        const cnicConflict = await tx.participant.findFirst({
+                            where: {
+                                cnic: normalizedCnic,
+                                id: { not: existingParticipant.id },
+                            },
+                            select: { id: true },
+                        })
+
+                        if (cnicConflict) {
+                            const err = new Error(`CNIC_TAKEN:${normalizedCnic}`) as Error & { code: string }
+                            err.code = 'CNIC_TAKEN'
+                            throw err
+                        }
+                    }
+
+                    const participantPatch = {
+                        ...(hasNonEmptyValue(normalizedCnic) ? { cnic: normalizedCnic } : {}),
+                        ...(hasNonEmptyValue(m.email) ? { email: m.email } : {}),
+                        ...(hasNonEmptyValue(m.fullName) ? { fullName: m.fullName } : {}),
+                        ...(hasNonEmptyValue(m.phone) ? { phone: m.phone } : {}),
+                        ...(hasNonEmptyValue(m.institution) ? { institution: m.institution } : {}),
+                    }
+
+                    participant = await tx.participant.update({
+                        where: { id: existingParticipant.id },
+                        data: participantPatch,
+                        include: { user: true },
+                    })
+                } else {
+                    const user = existingUser ?? await tx.user.create({
                         data: { email: m.email, type: 'PARTICIPANT' },
                     })
-                }
 
-                participant = await tx.participant.create({
-                    data: {
-                        userId:      user.id,
-                        cnic:        m.cnic,
-                        email:       m.email,
-                        fullName:    m.fullName,
-                        phone:       m.phone || null,
-                        institution: m.institution || null,
-                    },
-                    include: { user: true },
-                })
+                    participant = await tx.participant.create({
+                        data: {
+                            userId:      user.id,
+                            cnic:        normalizedCnic,
+                            email:       m.email,
+                            fullName:    m.fullName,
+                            phone:       m.phone || null,
+                            institution: m.institution || null,
+                        },
+                        include: { user: true },
+                    })
+                }
             }
 
             participantIds.push({ participantId: participant.id, isLeader: m.isLeader })
@@ -536,18 +576,59 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
         })
 
         return team
-    })
+        })
 
-    res.status(201).json({
-        success: true,
-        data: {
-            id:          result.id,
-            name:        result.name,
-            referenceId: result.referenceId,
-            competition: result.competition.name,
-            memberCount: result._count.members,
-        },
-    })
+        res.status(201).json({
+            success: true,
+            data: {
+                id:          result.id,
+                name:        result.name,
+                referenceId: result.referenceId,
+                competition: result.competition.name,
+                memberCount: result._count.members,
+            },
+        })
+    } catch (error: any) {
+        if (error?.code === 'BA_CODE_INVALID' || String(error?.message || '') === 'BA_CODE_INVALID') {
+            res.status(400).json({ success: false, message: 'BA Code is invalid.' })
+            return
+        }
+
+        if (error?.code === 'EARLY_BIRD_FULL' || String(error?.message || '') === 'EARLY_BIRD_FULL') {
+            res.status(409).json({
+                success: false,
+                message: 'Early Bird seats are full. Please register without Early Bird and pay the full amount.',
+            })
+            return
+        }
+
+        if (error?.code === 'CAPACITY_FULL' || String(error?.message || '') === 'CAPACITY_FULL') {
+            res.status(409).json({ success: false, message: 'Module seats are full. Please register for a different module.' })
+            return
+        }
+
+        if (error?.code === 'CNIC_TAKEN' || error?.message?.startsWith('CNIC_TAKEN:')) {
+            const cnic = error?.message?.split(':')[1] || 'this CNIC'
+            res.status(400).json({
+                success: false,
+                message: `CNIC ${cnic} is already registered to another participant.`,
+            })
+            return
+        }
+
+        if ((error?.code as string) === 'P2002') {
+            const target = (error?.meta?.target as string[]) || []
+            const field = target[0] || 'record'
+            res.status(409).json({
+                success: false,
+                message: `Duplicate entry: ${field} already exists.`,
+            })
+            return
+        }
+
+        const message = error?.message || 'Failed to create registration.'
+        res.status(500).json({ success: false, message })
+    }
 }
 
 //  GET /registrations/search?q=<query>

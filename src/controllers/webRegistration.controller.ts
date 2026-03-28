@@ -45,6 +45,10 @@ function normalizeCnic(value: string): string {
     return value.replace(/\D/g, '')
 }
 
+function hasNonEmptyValue(value: string | null | undefined): value is string {
+    return Boolean(value && value.trim())
+}
+
 function parseMembersStrict(raw: string | undefined):
     | { ok: true; members: z.infer<typeof publicMemberSchema>[] }
     | { ok: false; issues: z.ZodIssue[] } {
@@ -230,27 +234,55 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
                     })
 
                     if (existingUser?.participant) {
-                        const err = new Error(`EMAIL_TAKEN:${m.email}`) as Error & { code: string }
-                        err.code = 'EMAIL_TAKEN'
-                        throw err
+                        const existingParticipant = existingUser.participant
+                        if (m.cnic !== existingParticipant.cnic) {
+                            const cnicConflict = await tx.participant.findFirst({
+                                where: {
+                                    cnic: m.cnic,
+                                    id: { not: existingParticipant.id },
+                                },
+                                select: { id: true },
+                            })
+
+                            if (cnicConflict) {
+                                const err = new Error(`CNIC_TAKEN:${m.cnic}`) as Error & { code: string }
+                                err.code = 'CNIC_TAKEN'
+                                throw err
+                            }
+                        }
+
+                        const participantPatch = {
+                            ...(hasNonEmptyValue(m.cnic) ? { cnic: m.cnic } : {}),
+                            ...(hasNonEmptyValue(m.email) ? { email: m.email } : {}),
+                            ...(hasNonEmptyValue(m.fullName) ? { fullName: m.fullName } : {}),
+                            ...(hasNonEmptyValue(m.phone) ? { phone: m.phone } : {}),
+                            ...(hasNonEmptyValue(m.institution) ? { institution: m.institution } : {}),
+                            ...(hasNonEmptyValue(m.rollNumber) ? { rollNumber: m.rollNumber.toUpperCase() } : {}),
+                        }
+
+                        participant = await tx.participant.update({
+                            where: { id: existingParticipant.id },
+                            data: participantPatch,
+                            include: { user: true },
+                        })
+                    } else {
+                        const user = existingUser ?? await tx.user.create({
+                            data: { email: m.email, type: 'PARTICIPANT' },
+                        })
+
+                        participant = await tx.participant.create({
+                            data: {
+                                userId:      user.id,
+                                cnic:        m.cnic,
+                                email:       m.email,
+                                fullName:    m.fullName,
+                                phone:       m.phone || null,
+                                institution: m.institution || null,
+                                rollNumber:  m.rollNumber ? m.rollNumber.toUpperCase() : null,
+                            },
+                            include: { user: true },
+                        })
                     }
-
-                    const user = existingUser ?? await tx.user.create({
-                        data: { email: m.email, type: 'PARTICIPANT' },
-                    })
-
-                    participant = await tx.participant.create({
-                        data: {
-                            userId:      user.id,
-                            cnic:        m.cnic,
-                            email:       m.email,
-                            fullName:    m.fullName,
-                            phone:       m.phone || null,
-                            institution: m.institution || null,
-                            rollNumber:  m.rollNumber ? m.rollNumber.toUpperCase() : null,
-                        },
-                        include: { user: true },
-                    })
                 }
 
                 participantIds.push({ participantId: participant.id, isLeader })
@@ -359,6 +391,15 @@ export async function createPublicRegistration(req: PaymentRequest, res: Respons
             res.status(400).json({
                 success: false,
                 message: `Email ${email} is already registered to another participant.`,
+            })
+            return
+        }
+
+        if (error?.code === 'CNIC_TAKEN' || error?.message?.startsWith('CNIC_TAKEN:')) {
+            const cnic = error?.message?.split(':')[1] || 'this CNIC'
+            res.status(400).json({
+                success: false,
+                message: `CNIC ${cnic} is already registered to another participant.`,
             })
             return
         }
