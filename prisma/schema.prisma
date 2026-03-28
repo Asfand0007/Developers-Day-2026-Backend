@@ -33,7 +33,7 @@ model User {
 model Participant {
   id                     String                  @id @default(uuid())
   userId                 String                  @unique
-  cnic                   String                  @unique @db.VarChar(15)
+  cnic                   String?                 @unique @db.VarChar(15)
   email                  String                  @unique @db.VarChar(255)
   fullName               String                  @db.VarChar(100)
   phone                  String?                 @db.VarChar(20)
@@ -135,6 +135,7 @@ model ActivitySubmission {
 model SignupOtpLink {
   id          String   @id @default(uuid())
   email       String   @db.VarChar(255)
+  fullName    String?  @db.VarChar(100)
   tokenHash   String   @unique @db.VarChar(128)
   expiresAt   DateTime
   consumedAt  DateTime?
@@ -144,6 +145,28 @@ model SignupOtpLink {
 
   @@index([email, createdAt])
   @@index([expiresAt])
+}
+
+model MasterConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique @db.VarChar(100)
+  valueText   String?  @db.VarChar(255)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CompetitionConfig {
+  id            String      @id @default(uuid())
+  competitionId String
+  key           String      @db.VarChar(100)
+  valueText     String?     @db.VarChar(255)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+
+  @@unique([competitionId, key])
+  @@index([key])
 }
 
 model PointsLedger {
@@ -208,6 +231,7 @@ model Competition {
   ruleBookUrl          String?
   earlyBirdFee         Decimal   @default(0) @db.Decimal(10, 2)
   earlyBirdLimit       Int       @default(0)
+  configs              CompetitionConfig[]
   teams                Team[]
   venues               Venue[]   @relation("CompetitionToVenue")
   totalSeats           Int       @default(0)
