@@ -91,13 +91,13 @@ export async function loginUser(req: Request, res: Response): Promise<void> {
         return
     }
 
-    // if (prismaUser.staffProfile && !prismaUser.staffProfile.isApproved) {
-    //     res.status(403).json({
-    //         success: false,
-    //         message: 'Your account is pending admin approval.',
-    //     })
-    //     return
-    // }
+    if (prismaUser.staffProfile && !prismaUser.staffProfile.isApproved) {
+        res.status(403).json({
+            success: false,
+            message: 'Your account is pending admin approval.',
+        })
+        return
+    }
 
     // update lastLogin timestamp (fire-and-forget — non-critical, saves ~50 ms)
     prisma.user.update({
