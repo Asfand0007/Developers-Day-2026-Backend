@@ -33,7 +33,7 @@ model User {
 model Participant {
   id                     String                  @id @default(uuid())
   userId                 String                  @unique
-  cnic                   String                  @unique @db.VarChar(15)
+  cnic                   String?                 @unique @db.VarChar(15)
   email                  String                  @unique @db.VarChar(255)
   fullName               String                  @db.VarChar(100)
   phone                  String?                 @db.VarChar(20)
@@ -41,12 +41,175 @@ model Participant {
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   rollNumber             String?                 @db.VarChar(20)
+  minigameCode           String?                 @unique @db.VarChar(20)
   competitionAttendances CompetitionAttendance[]
+  activityCompletions    ParticipantActivityCompletion[]
+  activitySubmissions    ActivitySubmission[]
+  pointsLedgerEntries    PointsLedger[]
+  pointsSummary          PointsSummary?
+  scores                 Score[]
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   teamMembers            TeamMember[]
 
   @@index([cnic])
   @@index([email])
+}
+
+model Activity {
+  id          String                          @id @default(uuid())
+  code        String                          @unique @db.VarChar(50)
+  name        String                          @db.VarChar(100)
+  description String?
+  points      Int
+  activityTypeId String
+  correctAnswerCanonical String?              @db.VarChar(300)
+  isActive    Boolean                         @default(true)
+  createdAt   DateTime                        @default(now())
+  updatedAt   DateTime                        @updatedAt
+  createdByStaffProfileId String?
+  updatedByStaffProfileId String?
+  completions ParticipantActivityCompletion[]
+  submissions ActivitySubmission[]
+  type        ActivityType                    @relation(fields: [activityTypeId], references: [id], onDelete: Restrict)
+  createdBy   StaffProfile?                   @relation("ActivityCreatedBy", fields: [createdByStaffProfileId], references: [id], onDelete: SetNull)
+  updatedBy   StaffProfile?                   @relation("ActivityUpdatedBy", fields: [updatedByStaffProfileId], references: [id], onDelete: SetNull)
+
+  @@index([activityTypeId])
+  @@index([isActive])
+}
+
+model ActivityType {
+  id          String   @id @default(uuid())
+  /// Built-in codes include MANUAL, LINK_BASED, CORRECT_ANSWER, MANUAL_TEXT_SUBMISSION.
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  activities  Activity[]
+
+  @@index([isActive])
+}
+
+model ParticipantActivityCompletion {
+  id            String        @id @default(uuid())
+  participantId String
+  activityId    String
+  submissionLink String?
+  completedAt   DateTime      @default(now())
+  markedByStaffProfileId String
+  note          String?
+  participant   Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  activity      Activity      @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  markedBy      StaffProfile  @relation("ActivityCompletionMarkedBy", fields: [markedByStaffProfileId], references: [id], onDelete: Restrict)
+  ledgerEntries PointsLedger[]
+
+  @@unique([participantId, activityId])
+  @@index([participantId])
+  @@index([activityId])
+  @@index([markedByStaffProfileId])
+}
+
+model ActivitySubmission {
+  id                      String           @id @default(uuid())
+  participantId           String
+  activityId              String
+  submissionLink          String?
+  submissionText          String?          @db.VarChar(300)
+  status                  SubmissionStatus @default(PENDING)
+  submittedAt             DateTime         @default(now())
+  reviewedAt              DateTime?
+  reviewedByStaffProfileId String?
+  reviewNote              String?
+  participant             Participant      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  activity                Activity         @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  reviewedBy              StaffProfile?    @relation("ActivitySubmissionReviewedBy", fields: [reviewedByStaffProfileId], references: [id], onDelete: SetNull)
+
+  @@index([participantId])
+  @@index([activityId])
+  @@index([status, submittedAt])
+}
+
+model SignupOtpLink {
+  id          String   @id @default(uuid())
+  email       String   @db.VarChar(255)
+  fullName    String?  @db.VarChar(100)
+  tokenHash   String   @unique @db.VarChar(128)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  requestedIp String?  @db.VarChar(64)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
+}
+
+model MasterConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique @db.VarChar(100)
+  valueText   String?  @db.VarChar(255)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CompetitionConfig {
+  id            String      @id @default(uuid())
+  competitionId String
+  key           String      @db.VarChar(100)
+  valueText     String?     @db.VarChar(255)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+
+  @@unique([competitionId, key])
+  @@index([key])
+}
+
+model PointsLedger {
+  id                 String                   @id @default(uuid())
+  participantId      String
+  entryType          PointsLedgerEntryType
+  pointsDelta        Int
+  sourceCompletionId String?
+  actorStaffProfileId String
+  metadata           Json?
+  createdAt          DateTime                 @default(now())
+  participant        Participant              @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  sourceCompletion   ParticipantActivityCompletion? @relation(fields: [sourceCompletionId], references: [id], onDelete: SetNull)
+  actor              StaffProfile             @relation("PointsLedgerActor", fields: [actorStaffProfileId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceCompletionId])
+  @@index([participantId, createdAt])
+  @@index([entryType])
+  @@index([actorStaffProfileId])
+}
+
+model PointsSummary {
+  participantId String      @id
+  totalPoints   Int         @default(0)
+  updatedAt     DateTime    @updatedAt
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([totalPoints])
+}
+
+model PointsAuditLog {
+  id         String               @id @default(uuid())
+  actorStaffProfileId String
+  actionType PointsAuditActionType
+  targetType String?              @db.VarChar(50)
+  targetId   String?
+  note       String?
+  payload    Json?
+  createdAt  DateTime             @default(now())
+  actor      StaffProfile         @relation("PointsAuditActor", fields: [actorStaffProfileId], references: [id], onDelete: Restrict)
+
+  @@index([actorStaffProfileId, createdAt])
+  @@index([actionType, createdAt])
 }
 
 model Competition {
@@ -68,6 +231,7 @@ model Competition {
   ruleBookUrl          String?
   earlyBirdFee         Decimal   @default(0) @db.Decimal(10, 2)
   earlyBirdLimit       Int       @default(0)
+  configs              CompetitionConfig[]
   teams                Team[]
   venues               Venue[]   @relation("CompetitionToVenue")
   totalSeats           Int       @default(0)
@@ -145,6 +309,12 @@ model StaffProfile {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   staffRole     StaffRole
+  createdActivities         Activity[]                      @relation("ActivityCreatedBy")
+  updatedActivities         Activity[]                      @relation("ActivityUpdatedBy")
+  markedActivityCompletions ParticipantActivityCompletion[] @relation("ActivityCompletionMarkedBy")
+  reviewedActivitySubmissions ActivitySubmission[]          @relation("ActivitySubmissionReviewedBy")
+  pointsLedgerActions       PointsLedger[]                  @relation("PointsLedgerActor")
+  pointsAuditLogs           PointsAuditLog[]                @relation("PointsAuditActor")
   user          User      @relation(fields: [id], references: [id], onDelete: Cascade)
 
   @@index([nuId])
@@ -250,6 +420,40 @@ model UserAction {
   @@index([userId])
 }
 
+model Minigame {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true) @map("is_active")
+  apiKeyHash  String?  @unique @map("api_key_hash")
+  apiKeyPrefix String? @map("api_key_prefix")
+  imageUrl    String?  @map("image_url")
+  location    String?  @db.VarChar(200)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  scores Score[]
+}
+
+model Score {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userCode  String   @db.VarChar(20) @map("user_code")
+  gameId    String   @db.Uuid @map("game_id")
+  score     Float
+  playTime  Float    @map("play_time")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participant Participant @relation(fields: [userCode], references: [minigameCode], onDelete: Restrict, onUpdate: Cascade)
+  game        Minigame    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userCode, gameId])
+  @@index([gameId, score(sort: Desc), playTime(sort: Asc), updatedAt(sort: Desc)])
+  @@index([gameId, updatedAt(sort: Desc)])
+}
+
 enum UserType {
   PARTICIPANT
   STAFF
@@ -287,6 +491,29 @@ enum PaymentMethod {
   JAZZCASH
   CARD
   CASH
+}
+
+enum PointsLedgerEntryType {
+  MANUAL_ACTIVITY
+  ADJUSTMENT
+}
+
+enum PointsAuditActionType {
+  ACTIVITY_TYPE_CREATED
+  ACTIVITY_TYPE_UPDATED
+  ACTIVITY_TYPE_TOGGLED
+  ACTIVITY_COMPLETION_MARKED
+  ACTIVITY_COMPLETION_REVOKED
+  ACTIVITY_SUBMISSION_CREATED
+  ACTIVITY_SUBMISSION_APPROVED
+  ACTIVITY_SUBMISSION_REJECTED
+  POINTS_ADJUSTED
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 /// Every discrete operation a portal user can perform.

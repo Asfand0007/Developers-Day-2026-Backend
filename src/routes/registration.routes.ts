@@ -9,9 +9,11 @@ import {
     checkClashes,
     createRegistration,
     searchTeams,
+    searchTeamMembers,
     markTeamAttendance,
     changeTeamCompetition,
     updateTeamPaymentStatus,
+    getDashboardStats,
 } from '../controllers/registration.controller'
 
 const router = Router()
@@ -63,7 +65,23 @@ router.get(
     searchTeams
 )
 
+// GET /registrations/search-members?query=<query>
+router.get(
+    '/search-members',
+    requireAuth,
+    requireAction('VIEW_REGISTRATION_DETAILS'),
+    searchTeamMembers
+)
 
+
+
+// GET /registrations/dashboard-stats  ← MUST be before /:id
+router.get(
+    '/dashboard-stats',
+    requireAuth,
+    requireAction('VIEW_REGISTRATION_DETAILS'),
+    getDashboardStats
+)
 
 // POST /registrations/:teamId/mark-attendance
 router.post(

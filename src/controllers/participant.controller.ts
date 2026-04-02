@@ -49,6 +49,7 @@ export async function getParticipantByEmail(req: AuthRequest, res: Response): Pr
         data: {
             participant: {
                 id:          participant.id,
+                minigameCode: participant.minigameCode,
                 fullName:    participant.fullName,
                 email:       participant.email,
                 cnic:        participant.cnic,
@@ -102,6 +103,7 @@ export async function updateParticipantRecord(req: AuthRequest, res: Response): 
             success: true,
             data: {
                 id:          participant.id,
+                minigameCode: participant.minigameCode,
                 fullName:    participant.fullName,
                 email:       participant.email,
                 cnic:        participant.cnic,

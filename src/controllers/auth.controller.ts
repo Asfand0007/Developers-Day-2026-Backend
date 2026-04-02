@@ -91,19 +91,19 @@ export async function loginUser(req: Request, res: Response): Promise<void> {
         return
     }
 
-    // if (prismaUser.staffProfile && !prismaUser.staffProfile.isApproved) {
-    //     res.status(403).json({
-    //         success: false,
-    //         message: 'Your account is pending admin approval.',
-    //     })
-    //     return
-    // }
+    if (prismaUser.staffProfile && !prismaUser.staffProfile.isApproved) {
+        res.status(403).json({
+            success: false,
+            message: 'Your account is pending admin approval.',
+        })
+        return
+    }
 
-    // update lastLogin timestamp
-    await prisma.user.update({
+    // update lastLogin timestamp (fire-and-forget — non-critical, saves ~50 ms)
+    prisma.user.update({
         where: { id: prismaUser.id },
         data: { lastLogin: new Date() },
-    })
+    }).catch((err: unknown) => console.error('[login] lastLogin update failed:', err))
 
     // Compute effective actions: role defaults ∪ extra grants
     const roleDefaults = ROLE_DEFAULT_ACTIONS[prismaUser.staffProfile?.staffRole ?? ''] ?? []

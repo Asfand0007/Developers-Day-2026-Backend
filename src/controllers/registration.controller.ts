@@ -9,6 +9,10 @@ function normalizeCnic(value: string): string {
     return value.replace(/\D/g, '')
 }
 
+function hasNonEmptyValue(value: string | null | undefined): value is string {
+    return Boolean(value && value.trim())
+}
+
 
 // GET /registrations/competitions 
 
@@ -90,15 +94,45 @@ export async function listRegistrations(req: AuthRequest, res: Response): Promis
 export async function getRegistration(req: AuthRequest, res: Response): Promise<void> {
     const id = String(req.params.id)
 
+    // ── Step 1: Load team + competition + members in ONE query ─────────────────
+    // Do NOT nest teamEmailsQueue here — Prisma issues one query per member when
+    // `take` is used on a nested to-many, causing an N+1 against Supabase.
     const team = await prisma.team.findUnique({
         where: { id },
-        include: {
-            competition: true,
+        select: {
+            id:              true,
+            name:            true,
+            referenceId:     true,
+            paymentStatus:   true,
+            paymentMethod:   true,
+            paymentDate:     true,
+            declaredTID:     true,
+            amountPaid:      true,
+            paymentProofUrl: true,
+            createdAt:       true,
+            updatedAt:       true,
+            competition: {
+                select: {
+                    id:          true,
+                    name:        true,
+                    compDay:     true,
+                    fee:         true,
+                    minTeamSize: true,
+                    maxTeamSize: true,
+                },
+            },
             members: {
-                include: {
+                select: {
+                    id:           true,
+                    isLeader:     true,
+                    cardIssued:   true,
+                    cardIssuedAt: true,
+                    joinedAt:     true,
+                    participantId: true,
                     participant: {
                         select: {
                             id:          true,
+                            minigameCode: true,
                             fullName:    true,
                             email:       true,
                             cnic:        true,
@@ -109,32 +143,40 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
                 },
                 orderBy: { isLeader: 'desc' },
             },
-            attendance: {
-                select: {
-                    participantId: true,
-                    status:        true,
-                    method:        true,
-                    markedAt:      true,
-                },
-            },
         },
     })
-
-    const teamEmailQueue = await prisma.teamEmailsQueue.findMany({
-        where: { teamMember: { teamId: id } },
-        select: {
-            noteRejection: true,
-            noteOnHold: true,
-        },
-    })
-
-    const note = teamEmailQueue.length > 0        ? teamEmailQueue[0].noteRejection || teamEmailQueue[0].noteOnHold || ''
-        : null
 
     if (!team) {
         res.status(404).json({ success: false, message: 'Registration not found.' })
         return
     }
+
+    const memberIds = team.members.map((m) => m.id)
+
+    // ── Step 2: Parallel queries — no more sequential round-trips ──────────────
+    const [attendanceRecords, queueEntries] = await Promise.all([
+        prisma.competitionAttendance.findMany({
+            where: { teamId: id },
+            select: {
+                participantId: true,
+                status:        true,
+                method:        true,
+                markedAt:      true,
+            },
+        }),
+        memberIds.length > 0
+            ? prisma.teamEmailsQueue.findMany({
+                  where: { teamMemberId: { in: memberIds } },
+                  select: { noteRejection: true, noteOnHold: true },
+                  take: 1,
+              })
+            : Promise.resolve([]),
+    ])
+
+    const queueEntry = queueEntries[0]
+    const note = queueEntry
+        ? queueEntry.noteRejection || queueEntry.noteOnHold || ''
+        : null
 
     res.json({
         success: true,
@@ -151,9 +193,9 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
             createdAt:       team.createdAt,
             updatedAt:       team.updatedAt,
             competition:     team.competition,
-            note:      note,
+            note,
             members: team.members.map((m) => {
-                const att = team.attendance.find((a) => a.participantId === m.participantId)
+                const att = attendanceRecords.find((a) => a.participantId === m.participantId)
                 return {
                     id:           m.id,
                     isLeader:     m.isLeader,
@@ -216,7 +258,7 @@ export async function updateTeamPaymentStatus(req: AuthRequest, res: Response): 
             })
         }
 
-    })
+    }, { timeout: 15000 })
 
     res.json({
         success: true,
@@ -423,15 +465,17 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
     }
   
 
-    // Upsert participants and build team in a transaction
-    const result = await prisma.$transaction(async (tx) => {
+    try {
+        // Upsert participants and build team in a transaction
+        const result = await prisma.$transaction(async (tx) => {
         // Upsert each participant by CNIC
         const participantIds: { participantId: string; isLeader: boolean }[] = []
 
         for (const m of members) {
+            const normalizedCnic = normalizeCnic(m.cnic)
             // Look up an existing participant by CNIC first (stable identifier)
             let participant = await tx.participant.findUnique({
-                where: { cnic: m.cnic },
+                where: { cnic: normalizedCnic },
                 include: { user: true },
             })
 
@@ -448,25 +492,59 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
                 })
             } else {
                 // No participant with this CNIC — check if a User with this email already exists
-                let user = await tx.user.findUnique({ where: { email: m.email } })
+                const existingUser = await tx.user.findUnique({
+                    where: { email: m.email },
+                    include: { participant: true },
+                })
 
-                if (!user) {
-                    user = await tx.user.create({
+                if (existingUser?.participant) {
+                    const existingParticipant = existingUser.participant
+                    if (normalizedCnic !== existingParticipant.cnic) {
+                        const cnicConflict = await tx.participant.findFirst({
+                            where: {
+                                cnic: normalizedCnic,
+                                id: { not: existingParticipant.id },
+                            },
+                            select: { id: true },
+                        })
+
+                        if (cnicConflict) {
+                            const err = new Error(`CNIC_TAKEN:${normalizedCnic}`) as Error & { code: string }
+                            err.code = 'CNIC_TAKEN'
+                            throw err
+                        }
+                    }
+
+                    const participantPatch = {
+                        ...(hasNonEmptyValue(normalizedCnic) ? { cnic: normalizedCnic } : {}),
+                        ...(hasNonEmptyValue(m.email) ? { email: m.email } : {}),
+                        ...(hasNonEmptyValue(m.fullName) ? { fullName: m.fullName } : {}),
+                        ...(hasNonEmptyValue(m.phone) ? { phone: m.phone } : {}),
+                        ...(hasNonEmptyValue(m.institution) ? { institution: m.institution } : {}),
+                    }
+
+                    participant = await tx.participant.update({
+                        where: { id: existingParticipant.id },
+                        data: participantPatch,
+                        include: { user: true },
+                    })
+                } else {
+                    const user = existingUser ?? await tx.user.create({
                         data: { email: m.email, type: 'PARTICIPANT' },
                     })
-                }
 
-                participant = await tx.participant.create({
-                    data: {
-                        userId:      user.id,
-                        cnic:        m.cnic,
-                        email:       m.email,
-                        fullName:    m.fullName,
-                        phone:       m.phone || null,
-                        institution: m.institution || null,
-                    },
-                    include: { user: true },
-                })
+                    participant = await tx.participant.create({
+                        data: {
+                            userId:      user.id,
+                            cnic:        normalizedCnic,
+                            email:       m.email,
+                            fullName:    m.fullName,
+                            phone:       m.phone || null,
+                            institution: m.institution || null,
+                        },
+                        include: { user: true },
+                    })
+                }
             }
 
             participantIds.push({ participantId: participant.id, isLeader: m.isLeader })
@@ -496,11 +574,11 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
 
         const seatUpdate = isEarlyBird
             ? await tx.competition.updateMany({
-                    where: { id: competitionId, earlyBirdLimit: { gt: -2 } },
+                    where: { id: competitionId, earlyBirdLimit: { gt: 0 } },
                     data: { earlyBirdLimit: { decrement: 1 } },
                 })
             : await tx.competition.updateMany({
-                    where: { id: competitionId, capacityLimit: { gt: -2 } },
+                    where: { id: competitionId, capacityLimit: { gt: 0 } },
                     data: { capacityLimit: { decrement: 1 } },
                 })
 
@@ -535,18 +613,59 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
         })
 
         return team
-    })
+        }, { timeout: 15000 })
 
-    res.status(201).json({
-        success: true,
-        data: {
-            id:          result.id,
-            name:        result.name,
-            referenceId: result.referenceId,
-            competition: result.competition.name,
-            memberCount: result._count.members,
-        },
-    })
+        res.status(201).json({
+            success: true,
+            data: {
+                id:          result.id,
+                name:        result.name,
+                referenceId: result.referenceId,
+                competition: result.competition.name,
+                memberCount: result._count.members,
+            },
+        })
+    } catch (error: any) {
+        if (error?.code === 'BA_CODE_INVALID' || String(error?.message || '') === 'BA_CODE_INVALID') {
+            res.status(400).json({ success: false, message: 'BA Code is invalid.' })
+            return
+        }
+
+        if (error?.code === 'EARLY_BIRD_FULL' || String(error?.message || '') === 'EARLY_BIRD_FULL') {
+            res.status(409).json({
+                success: false,
+                message: 'Early Bird seats are full. Please register without Early Bird and pay the full amount.',
+            })
+            return
+        }
+
+        if (error?.code === 'CAPACITY_FULL' || String(error?.message || '') === 'CAPACITY_FULL') {
+            res.status(409).json({ success: false, message: 'Module seats are full. Please register for a different module.' })
+            return
+        }
+
+        if (error?.code === 'CNIC_TAKEN' || error?.message?.startsWith('CNIC_TAKEN:')) {
+            const cnic = error?.message?.split(':')[1] || 'this CNIC'
+            res.status(400).json({
+                success: false,
+                message: `CNIC ${cnic} is already registered to another participant.`,
+            })
+            return
+        }
+
+        if ((error?.code as string) === 'P2002') {
+            const target = (error?.meta?.target as string[]) || []
+            const field = target[0] || 'record'
+            res.status(409).json({
+                success: false,
+                message: `Duplicate entry: ${field} already exists.`,
+            })
+            return
+        }
+
+        const message = error?.message || 'Failed to create registration.'
+        res.status(500).json({ success: false, message })
+    }
 }
 
 //  GET /registrations/search?q=<query>
@@ -613,6 +732,55 @@ export async function searchTeams(req: AuthRequest, res: Response): Promise<void
             }
         }),
     })
+}
+
+// GET /registrations/search-members?query=<query>
+
+export async function searchTeamMembers(req: AuthRequest, res: Response): Promise<void> {
+    const query = (req.query.query as string)?.trim() ?? ''
+
+    if (!query) {
+        res.json({ success: true, data: [] })
+        return
+    }
+
+    // Find all participants matching the search query
+    const participants = await prisma.participant.findMany({
+        where: {
+            OR: [
+                { fullName: { contains: query, mode: 'insensitive' } },
+                { email:    { contains: query, mode: 'insensitive' } },
+                { cnic:     { contains: query, mode: 'insensitive' } },
+            ],
+        },
+        include: {
+            teamMembers: {
+                include: {
+                    team: {
+                        include: {
+                            competition: {
+                                select: { id: true, name: true },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        take: 50,
+    })
+
+    // Group by participant and collect competitions
+    const results = participants.map((participant) => ({
+        participant: {
+            id: participant.id,
+            fullName: participant.fullName,
+            email: participant.email,
+            cnic: participant.cnic,
+        },
+        competitions: participant.teamMembers.map((tm) => tm.team.competition),
+    }))
+
+    res.json({ success: true, data: results })
 }
 
 //  POST /registrations/:teamId/mark-attendance
@@ -813,5 +981,54 @@ export async function changeTeamCompetition(req: AuthRequest, res: Response): Pr
         success: true,
         message: `Team moved to "${newComp.name}" successfully.`,
         data: { teamId, newCompetitionId, newCompetitionName: newComp.name },
+    })
+}
+
+// GET /registrations/dashboard-stats
+
+export async function getDashboardStats(_req: AuthRequest, res: Response): Promise<void> {
+    // Get all stats in parallel
+    const [
+        totalRegistrations,
+        verifiedPayments,
+        pendingPayments,
+        totalParticipants,
+        attendedParticipants,
+    ] = await Promise.all([
+        // Total registrations (teams)
+        prisma.team.count(),
+
+        // Verified payments
+        prisma.team.count({
+            where: { paymentStatus: 'VERIFIED' },
+        }),
+
+        // Pending payments
+        prisma.team.count({
+            where: { paymentStatus: 'PENDING_PAYMENT' },
+        }),
+
+        // Total participants
+        prisma.teamMember.count(),
+
+        // Attended participants
+        prisma.competitionAttendance.count({
+            where: { status: true },
+        }),
+    ])
+
+    // Calculate attendance percentage
+    const attendancePercentage = totalParticipants > 0
+        ? Math.round((attendedParticipants / totalParticipants) * 100)
+        : 0
+
+    res.json({
+        success: true,
+        data: {
+            totalRegistrations,
+            verifiedPayments,
+            pendingPayments,
+            attendancePercentage,
+        },
     })
 }
