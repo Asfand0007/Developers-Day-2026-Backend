@@ -90,12 +90,41 @@ export async function listRegistrations(req: AuthRequest, res: Response): Promis
 export async function getRegistration(req: AuthRequest, res: Response): Promise<void> {
     const id = String(req.params.id)
 
+    // ── Step 1: Load team + competition + members in ONE query ─────────────────
+    // Do NOT nest teamEmailsQueue here — Prisma issues one query per member when
+    // `take` is used on a nested to-many, causing an N+1 against Supabase.
     const team = await prisma.team.findUnique({
         where: { id },
-        include: {
-            competition: true,
+        select: {
+            id:              true,
+            name:            true,
+            referenceId:     true,
+            paymentStatus:   true,
+            paymentMethod:   true,
+            paymentDate:     true,
+            declaredTID:     true,
+            amountPaid:      true,
+            paymentProofUrl: true,
+            createdAt:       true,
+            updatedAt:       true,
+            competition: {
+                select: {
+                    id:          true,
+                    name:        true,
+                    compDay:     true,
+                    fee:         true,
+                    minTeamSize: true,
+                    maxTeamSize: true,
+                },
+            },
             members: {
-                include: {
+                select: {
+                    id:           true,
+                    isLeader:     true,
+                    cardIssued:   true,
+                    cardIssuedAt: true,
+                    joinedAt:     true,
+                    participantId: true,
                     participant: {
                         select: {
                             id:          true,
@@ -109,32 +138,40 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
                 },
                 orderBy: { isLeader: 'desc' },
             },
-            attendance: {
-                select: {
-                    participantId: true,
-                    status:        true,
-                    method:        true,
-                    markedAt:      true,
-                },
-            },
         },
     })
-
-    const teamEmailQueue = await prisma.teamEmailsQueue.findMany({
-        where: { teamMember: { teamId: id } },
-        select: {
-            noteRejection: true,
-            noteOnHold: true,
-        },
-    })
-
-    const note = teamEmailQueue.length > 0        ? teamEmailQueue[0].noteRejection || teamEmailQueue[0].noteOnHold || ''
-        : null
 
     if (!team) {
         res.status(404).json({ success: false, message: 'Registration not found.' })
         return
     }
+
+    const memberIds = team.members.map((m) => m.id)
+
+    // ── Step 2: Parallel queries — no more sequential round-trips ──────────────
+    const [attendanceRecords, queueEntries] = await Promise.all([
+        prisma.competitionAttendance.findMany({
+            where: { teamId: id },
+            select: {
+                participantId: true,
+                status:        true,
+                method:        true,
+                markedAt:      true,
+            },
+        }),
+        memberIds.length > 0
+            ? prisma.teamEmailsQueue.findMany({
+                  where: { teamMemberId: { in: memberIds } },
+                  select: { noteRejection: true, noteOnHold: true },
+                  take: 1,
+              })
+            : Promise.resolve([]),
+    ])
+
+    const queueEntry = queueEntries[0]
+    const note = queueEntry
+        ? queueEntry.noteRejection || queueEntry.noteOnHold || ''
+        : null
 
     res.json({
         success: true,
@@ -151,9 +188,9 @@ export async function getRegistration(req: AuthRequest, res: Response): Promise<
             createdAt:       team.createdAt,
             updatedAt:       team.updatedAt,
             competition:     team.competition,
-            note:      note,
+            note,
             members: team.members.map((m) => {
-                const att = team.attendance.find((a) => a.participantId === m.participantId)
+                const att = attendanceRecords.find((a) => a.participantId === m.participantId)
                 return {
                     id:           m.id,
                     isLeader:     m.isLeader,
@@ -496,11 +533,11 @@ export async function createRegistration(req: AuthRequest, res: Response): Promi
 
         const seatUpdate = isEarlyBird
             ? await tx.competition.updateMany({
-                    where: { id: competitionId, earlyBirdLimit: { gt: -2 } },
+                    where: { id: competitionId, earlyBirdLimit: { gt: 0 } },
                     data: { earlyBirdLimit: { decrement: 1 } },
                 })
             : await tx.competition.updateMany({
-                    where: { id: competitionId, capacityLimit: { gt: -2 } },
+                    where: { id: competitionId, capacityLimit: { gt: 0 } },
                     data: { capacityLimit: { decrement: 1 } },
                 })
 
@@ -613,6 +650,55 @@ export async function searchTeams(req: AuthRequest, res: Response): Promise<void
             }
         }),
     })
+}
+
+// GET /registrations/search-members?query=<query>
+
+export async function searchTeamMembers(req: AuthRequest, res: Response): Promise<void> {
+    const query = (req.query.query as string)?.trim() ?? ''
+
+    if (!query) {
+        res.json({ success: true, data: [] })
+        return
+    }
+
+    // Find all participants matching the search query
+    const participants = await prisma.participant.findMany({
+        where: {
+            OR: [
+                { fullName: { contains: query, mode: 'insensitive' } },
+                { email:    { contains: query, mode: 'insensitive' } },
+                { cnic:     { contains: query, mode: 'insensitive' } },
+            ],
+        },
+        include: {
+            teamMembers: {
+                include: {
+                    team: {
+                        include: {
+                            competition: {
+                                select: { id: true, name: true },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        take: 50,
+    })
+
+    // Group by participant and collect competitions
+    const results = participants.map((participant) => ({
+        participant: {
+            id: participant.id,
+            fullName: participant.fullName,
+            email: participant.email,
+            cnic: participant.cnic,
+        },
+        competitions: participant.teamMembers.map((tm) => tm.team.competition),
+    }))
+
+    res.json({ success: true, data: results })
 }
 
 //  POST /registrations/:teamId/mark-attendance
@@ -813,5 +899,54 @@ export async function changeTeamCompetition(req: AuthRequest, res: Response): Pr
         success: true,
         message: `Team moved to "${newComp.name}" successfully.`,
         data: { teamId, newCompetitionId, newCompetitionName: newComp.name },
+    })
+}
+
+// GET /registrations/dashboard-stats
+
+export async function getDashboardStats(_req: AuthRequest, res: Response): Promise<void> {
+    // Get all stats in parallel
+    const [
+        totalRegistrations,
+        verifiedPayments,
+        pendingPayments,
+        totalParticipants,
+        attendedParticipants,
+    ] = await Promise.all([
+        // Total registrations (teams)
+        prisma.team.count(),
+
+        // Verified payments
+        prisma.team.count({
+            where: { paymentStatus: 'VERIFIED' },
+        }),
+
+        // Pending payments
+        prisma.team.count({
+            where: { paymentStatus: 'PENDING_PAYMENT' },
+        }),
+
+        // Total participants
+        prisma.teamMember.count(),
+
+        // Attended participants
+        prisma.competitionAttendance.count({
+            where: { status: true },
+        }),
+    ])
+
+    // Calculate attendance percentage
+    const attendancePercentage = totalParticipants > 0
+        ? Math.round((attendedParticipants / totalParticipants) * 100)
+        : 0
+
+    res.json({
+        success: true,
+        data: {
+            totalRegistrations,
+            verifiedPayments,
+            pendingPayments,
+            attendancePercentage,
+        },
     })
 }

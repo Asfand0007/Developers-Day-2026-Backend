@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -40,7 +41,21 @@ const corsOptions: cors.CorsOptions = {
 
 app.use(cors(corsOptions));
 
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
+
 app.use(express.json());
+
+// Request timing (logs method, path, status, duration)
+import { requestTiming } from './middleware/timing'
+app.use(requestTiming)
 
 // Routes
 import authRoutes from './routes/auth.routes'

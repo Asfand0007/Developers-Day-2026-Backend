@@ -29,30 +29,36 @@ const connectDB = async () => {
     console.log("[database]: Connected to Supabase Postgres via Prisma successfully");
 
     // Ensure Row Level Security is enabled on all tables.
-    // This runs on every boot and is safe to repeat.
-    const rlsTables = [
-      'User',
-      'Participant',
-      'Competition',
-      'Team',
-      'TeamMember',
-      'CompetitionAttendance',
-      'StaffProfile',
-      'Company',
-      'FoodStall',
-      'BrandAmbassador',
-      'Category',
-      'Venue',
-      'UserAction',
-    ];
+    // Skip when SKIP_RLS_SETUP=true (e.g. production where RLS is already
+    // enabled via migrations) to avoid 13 extra DB round-trips on cold start.
+    if (process.env.SKIP_RLS_SETUP === 'true') {
+      console.log("[database]: Skipping RLS setup (SKIP_RLS_SETUP=true)");
+    } else {
+      const rlsTables = [
+        'User',
+        'Participant',
+        'Competition',
+        'Team',
+        'TeamMember',
+        'CompetitionAttendance',
+        'StaffProfile',
+        'Company',
+        'FoodStall',
+        'BrandAmbassador',
+        'Category',
+        'Venue',
+        'UserAction',
+      ];
 
-    for (const table of rlsTables) {
-      try {
-        // Use double quotes to preserve Prisma's casing for table names.
-        await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
-      } catch (err) {
-        console.warn(`[database]: Failed to enable RLS on table "${table}"`, err);
-      }
+      await Promise.all(
+        rlsTables.map(async (table) => {
+          try {
+            await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
+          } catch (err) {
+            console.warn(`[database]: Failed to enable RLS on table "${table}"`, err);
+          }
+        })
+      );
     }
   } catch (error) {
     console.error("[database]: Prisma connection failed", error);
