@@ -7,6 +7,7 @@ import {
     actionsToKebab,
     kebabToAction,
     ActionEnum,
+    invalidateUserActionsCache,
 } from '../utils/actions'
 
 // ─── GET /users — list all staff users ───────────────────────────────────────
@@ -116,6 +117,9 @@ export async function updateUserActions(req: AuthRequest, res: Response): Promis
             })
         ),
     ])
+
+    // Bust the permission cache so the user picks up new actions immediately
+    invalidateUserActionsCache(id)
 
     const effective = [...new Set([...roleDefaults, ...extraOnly])]
 
