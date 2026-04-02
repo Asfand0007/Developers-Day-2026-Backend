@@ -125,7 +125,7 @@ export async function getUserEffectiveActions(userId: string): Promise<string[]>
 
     const allActions = new Set<string>([
         ...roleDefaults,
-        ...extraActions.map((a: any) => a.action),
+        ...extraActions.map((a: { action: string }) => a.action),
     ])
 
     const result = Array.from(allActions)
